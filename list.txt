@@ -1,0 +1,111 @@
+1) 진짜 자주 쓰이는 핵심 20% (사실상 필수)
+
+std::vector — 연속 메모리, 랜덤 접근/O(1), push_back 최적, 기본 컨테이너.
+
+std::string — 텍스트 저장 기본 타입(= basic_string<char>).
+
+std::array — 고정 크기, 스택/내부 저장, std::vector보다 오버헤드 적음.
+
+std::unordered_map — 해시 맵, 평균 O(1) 조회/삽입. 키→값 룩업 최다.
+
+std::map — 정렬 맵(트리), 순회 정렬 필요/범위 질의에 유리.
+
+std::unordered_set — 해시 셋, 중복 제거/멤버십 체크 O(1) 평균.
+
+std::set — 정렬 셋(트리), 순서 유지·범위 질의.
+
+std::deque — 앞/뒤 push 빠름, 큐/덱 구현 기초. 긴 수명 대기열에 좋음.
+
+std::queue(어댑터) — FIFO 큐, 내부는 보통 deque.
+
+std::priority_queue(어댑터) — 힙 기반 우선순위 큐, 최댓값 팝에 최적.
+
+std::pair / std::tuple — 다중 반환·임시 묶음.
+
+std::optional — “있을 수도/없을 수도” 값 표현(널 대체).
+
+std::string_view — 비소유 문자열 뷰, 복사 최소화에 필수(C++17+).
+
+std::span — 비소유 배열/버퍼 뷰(C++20+). 렌더/IO 버퍼에 유용.
+
+
+
+
+2) 보조로 꽤 자주 보이는 것
+
+std::list — 양방향 연결 리스트(캐시 비우호·특정 스플라이싱 용도).
+
+std::bitset — 고정 크기 비트 집합/플래그.
+
+std::vector<bool> — 특수화(비트 압축); 쓰임은 있으나 주의 필요.
+
+std::stack(어댑터) — LIFO 스택.
+
+std::multimap / std::multiset — 중복 키 허용 정렬 컨테이너.
+
+std::unordered_multimap / std::unordered_multiset — 중복 허용 해시 컨테이너.
+
+std::filesystem::path — 경로 “자료구조” 성격으로 파일 I/O에서 상시 사용.
+
+
+
+
+
+
+3) 니치/특수 용도(알아두면 든든)
+
+std::forward_list — 단방향 리스트(초경량, 특수 상황).
+
+std::any / std::variant — 타입 소거 / 합타입(상태 머신, 메시지 등).
+
+std::valarray — 수치 연산용(요즘은 드묾).
+
+std::pmr::* — 메모리 리소스 기반 컨테이너(C++17+)로 커스텀 할당 최적화.
+
+선택 가이드(초간단)
+
+대부분: vector (필요하면 reserve로 재할당 최소화)
+
+키→값 룩업: 기본 unordered_map, 정렬 필요/범위 질의면 map
+
+중복 없는 집합: unordered_set(빠른 멤버십), 정렬 필요하면 set
+
+큐/우선순위: queue / priority_queue
+
+고정 크기/스택: array
+
+문자열 성능: 소유는 string, 파싱·슬라이스는 string_view
+
+버퍼 뷰: span
+
+옵셔널 값: optional
+
+다중 반환: pair/tuple
+
+헤더 빠른 표
+
+<vector> <string> <array> <deque> <list> <forward_list>
+
+<unordered_map> <map> <unordered_set> <set>
+
+<queue>(queue/priority_queue/stack 어댑터)
+
+<utility>(pair) / <tuple> / <optional> / <variant> / <any>
+
+<string_view> / <span> / <bitset> / <filesystem>
+
+보너스: 그래픽스/엔진 쪽에서 특히 많이 쓰이는 조합
+
+프레임버퍼/정점/인덱스: vector + span
+
+리소스/핸들 룩업: unordered_map
+
+태그/중복 제거: unordered_set
+
+작업 큐/이벤트: deque/queue/priority_queue
+
+문자열 파싱/로깅: string + string_view
+
+플래그 모음: bitset 또는 비트마스크(열거형 + 연산)
+
+필요하면 각 항목별로 “언제 쓰고 언제 피해야 하는지”/복잡도/주의점까지 더 자세히 풀어드릴게요.

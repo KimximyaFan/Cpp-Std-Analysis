@@ -1,0 +1,181 @@
+#ifndef _STL_VECTOR_H / #define _STL_VECTOR_H 1
+-> 헤더가드
+
+
+
+
+#if __cplusplus >= 202002L
+-> 컴파일러가 표준 매크로 __cplusplus로 사용 중인 C++ 표준 버전을 검사
+
+#if __cplusplus >= 202002L
+  // C++20 기능 사용(예: std::span, concepts 등)
+#else
+  // 하위 버전 대체 구현
+#endif
+
+
+
+
+
+
+
+#if _GLIBCXX_SANITIZE_STD_ALLOCATOR && _GLIBCXX_SANITIZE_VECTOR
+extern "C" void
+__sanitizer_annotate_contiguous_container(const void*, const void*,
+                                          const void*, const void*);
+#endif
+
+-> AddressSanitizer(ASan) 같은 런타임이 연속 컨테이너의 사용/유휴 구간을 추적하도록 알려 주는 런타임 훅 선언
+std::vector는 [begin, end)는 사용 중, [end, capacity_end)는 여유 공간
+ASan에 “여긴 아직 쓰면 안 됨(포이즌)”/“여기까지는 이제 사용 중(언포이즌)” 같은 상태 변화를 알리면, 경계를 한 칸 넘는 실수도 바로 잡아줌 예: v[size()]
+
+
+
+
+
+
+
+
+_GLIBCXX_BEGIN_NAMESPACE_VERSION, _GLIBCXX_BEGIN_NAMESPACE_CONTAINER
+
+-> libstdc++가 ABI/버전 호환을 위해 쓰는 네임스페이스 열기 매크로
+
+namespace std {
+  _GLIBCXX_BEGIN_NAMESPACE_VERSION      // inline namespace __8 { ... 같은 버전 네임스페이스
+  _GLIBCXX_BEGIN_NAMESPACE_CONTAINER    // inline namespace __cxx11 { ... (컨테이너 ABI 전용)
+
+  // std::vector 정의 본문
+
+  _GLIBCXX_END_NAMESPACE_CONTAINER
+  _GLIBCXX_END_NAMESPACE_VERSION
+}
+
+VERSION: libstdc++ 내부의 버전 네임스페이스(보통 inline) 를 열어줍니다. 구현이 바뀌어도 기존 ABI를 보존하거나 구분하기 위한 장치.
+CONTAINER: 특히 컨테이너 계열에 대해 C++11 ABI 전환(__cxx11) 을 분리하기 위해 쓰이던 껍데기입니다(문자열/컨테이너 ABI 변경과 연관).
+요지는: 표면상 우리는 std::vector를 쓰지만, 안쪽은 inline namespace로 버전이 구분되어 ABI 호환성을 유지한다는 것.
+
+
+
+
+
+
+
+전처리기
+#if <식>: 조건부 컴파일(정수 상수식 평가).
+#ifdef MACRO: 매크로 정의 여부로 분기.
+#endif: 조건부 블록 종료.
+#define MACRO ...: 매크로 정의(상수/함수형 매크로 등).
+
+#define USE_FAST 1
+
+#ifdef USE_FAST
+  void run_fast();
+#else
+  void run_slow();
+#endif
+
+
+
+
+
+
+template: 템플릿 정의/선언에 사용.
+template<class T>
+struct Box { T value; };
+
+
+
+typename:
+템플릿 파라미터 선언 시 class와 동치.
+의존 이름이 타입임을 명시할 때 필수.
+template<class T>
+void f() {
+  // T가 템플릿 파라미터이므로, T::value_type이 "타입"임을 알려야 함
+  typename T::value_type x{};
+}
+T::value_type는 **“T가 담는 요소의 타입”**을 말하는 중첩 타입(alias/typedef) 입니다.
+예) std::vector<int>의 value_type은 int, std::map<K,V>의 value_type은 std::pair<const K, V>.
+템플릿 안에서 T는 아직 미정의 타입(의존 이름) 입니다.
+컴파일러는 T::value_type이 “타입인지 값인지”를 미리 모름 → 타입임을 알려주는 키워드가 typename
+무엇이 들어있나? (STL 관례)
+대부분의 표준 컨테이너/이터레이터는 다음 연관 타입들을 갖습니다.
+value_type : 요소 타입
+reference : 참조 타입(보통 value_type&)
+const_reference : 상수 참조 타입
+pointer : 포인터 타입
+difference_type : 이터레이터 간 거리 타입
+iterator/const_iterator : 이터레이터 타입들
+iterator_category(이터레이터 쪽)
+
+
+
+
+typedef: 기존 타입에 별칭 제공(구식). C++11 이후엔 using 권장.
+typedef unsigned long ulong_t;
+using ulong_u = unsigned long;   // 권장
+
+
+
+
+이 조합이 자주 보이는 이유:
+template<class T>
+struct Vec {
+  typedef typename std::vector<T>::size_type size_type; // 의존 타입 별칭
+};
+typename은 “std::vector<T>::size_type이 타입이다”라고 파서에 알려 주는 용도고,
+typedef(또는 using)는 그 타입에 별칭을 붙이는 용도입니다.
+
+
+
+
+
+
+
+내부 저장 레이아웃(3포인터 구조)
+
+_Vector_base::_Vector_impl_data 안에 _M_start / _M_finish / _M_end_of_storage 3개 포인터로 메모리를 관리
+즉, [start, finish)가 유효 요소 구간, [finish, end_of_storage)는 여유(capacity)
+
+정의: 연속 메모리 위에 놓인 가변 길이 동적 배열.
+
+연속성 보장: &v[0]부터 sizeof(T)*size() 만큼 연속. data()는 C API와 바로 연동 가능한 포인터를 줌.
+
+
+
+
+
+
+
+
+
+
+_GLIBCXX_ASAN_ANNOTATE_GROW(1);
+요약하면 _GLIBCXX_ASAN_ANNOTATE_GROW(1)는 libstdc++의 std::vector가 ASan(AddressSanitizer)에게 
+“지금부터 끝에 1개 분량의 영역을 ‘임시로 유효’로 쓸 거야”라고 알려주는 주석(애너테이션) 매크로예요. 
+push_back 같은 경로에서 요소를 실제로 하나 만들기 직전에 호출됩니다. 요소 생성이 끝나면 바로 뒤이어 
+**_GLIBCXX_ASAN_ANNOTATE_GREW(1)**가 호출되어 “그 1칸을 실제로 사용 완료”했다고 갱신합니다. 
+이 패턴 덕분에 size 밖(capacity 안) 넘겨 접근을 ASan이 정확히 잡아낼 수 있어요. 
+gcc.gnu.org
+핵심 동작은 이렇게 구현됩니다:
+매크로 정의
+GROW(n)은 내부 RAII 가드 타입 **_Asan<>::_Grow**를 하나 생성합니다(생성자에서 “언포이즌=유효화”) 
+→ 가드 소멸자에서 아직 사용하지 않은 분량은 **_S_shrink**로 되돌립니다(“포이즌=무효화”). 
+**GREW(n)**은 가드 내부 카운터를 깎아 “이미 쓴 만큼은 되돌리지 말라”고 표시합니다. 
+gcc.gnu.org
+이 RAII가 실제로 ASan 런타임 훅 __sanitizer_annotate_contiguous_container(begin, end_storage, old_mid, new_mid)를 호출하여, 
+컨테이너의 사용 구간 경계를 finish → finish+n으로 조정합니다. 
+gcc.gnu.org
+결과적으로 push_back의 “여유 있음” 경로는 보통 이런 형태가 됩니다:
+_GLIBCXX_ASAN_ANNOTATE_GROW(1);
+// 요소 생성
+++finish;
+_GLIBCXX_ASAN_ANNOTATE_GREW(1);
+(실제 소스에도 이 순서로 존재합니다.) 
+gcc.gnu.org
+예외 안전성: 요소 생성 중 예외로 실패하면 가드 소멸자가 남은 분량을 자동으로 되돌려 경계를 원래대로 복구합니다(ASan 입장에서도 일관 유지). 
+gcc.gnu.org
+빌드 조건: 이 애너테이션들은 특정 빌드 매크로가 켜졌을 때만 활성화되고, 아니면 전부 빈(no-op) 매크로로 대체됩니다. 
+gcc.gnu.org
+요컨대, _GLIBCXX_ASAN_ANNOTATE_GROW(1)/GREW(1) 콤보는 vector가 size를 늘리며 
+capacity 일부를 실제로 채우는 순간을 ASan에 정확히 알리기 위한 내부 장치입니다. 
+사용자 코드에서 직접 쓸 일은 없고(내부 매크로), ASan로 디버깅할 때 vector 경계 버그를 더 잘 잡아내게 해주는 도우미
