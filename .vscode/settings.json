@@ -34,6 +34,9 @@
         "numeric": "cpp",
         "system_error": "cpp",
         "tuple": "cpp",
-        "variant": "cpp"
+        "variant": "cpp",
+        "initializer_list": "cpp",
+        "text_encoding": "cpp",
+        "*.txt": "cpp"
     }
 }
