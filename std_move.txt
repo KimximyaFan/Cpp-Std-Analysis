@@ -1,0 +1,79 @@
+std::move 는 move.h 꺼인가 algobase.h 꺼인가?
+
+짧게 정리하면 둘 다 맞습니다. 다만 “서로 다른 std::move”예요.
+
+즉, “rvalue로 만들어 주는 캐스트”는 <utility> 쪽,
+“구간을 이동 복사하는 알고리즘”은 <algorithm> 쪽입니다.
+
+객체를 rvalue로 캐스팅해서 이동을 유도하고 싶다 → #include <utility>
+std::string s; 
+v.push_back(std::move(s));     // rvalue 캐스트 (utility)
+
+구간을 한 번에 옮기고 싶다 → #include <algorithm>
+
+std::vector<std::string> a, b;
+std::move(a.begin(), a.end(), std::back_inserter(b)); // 알고리즘 (algorithm)
+
+
+
+
+rvalue 캐스트 = <utility>(= bits/move.h)
+
+이동 알고리즘 = <algorithm>(= bits/stl_algobase.h)
+
+
+
+
+r value 로 만들어주는
+
+  /**
+   *  @brief  Convert a value to an rvalue.
+   *  @param  __t  A thing of arbitrary type.
+   *  @return The parameter cast to an rvalue-reference to allow moving it.
+  */
+  template<typename _Tp>
+    _GLIBCXX_NODISCARD
+    constexpr typename std::remove_reference<_Tp>::type&&
+    move(_Tp&& __t) noexcept
+    { return static_cast<typename std::remove_reference<_Tp>::type&&>(__t); }
+
+
+
+
+
+
+
+
+구간 복사 이동
+
+  /**
+   *  @brief Moves the range [first,last) into result.
+   *  @ingroup mutating_algorithms
+   *  @param  __first  An input iterator.
+   *  @param  __last   An input iterator.
+   *  @param  __result An output iterator.
+   *  @return   result + (last - first)
+   *
+   *  This inline function will boil down to a call to @c memmove whenever
+   *  possible.  Failing that, if random access iterators are passed, then the
+   *  loop count will be known (and therefore a candidate for compiler
+   *  optimizations such as unrolling).  Result may not be contained within
+   *  [first,last); the move_backward function should be used instead.
+   *
+   *  Note that the end of the output range is permitted to be contained
+   *  within [first,last).
+  */
+  template<typename _II, typename _OI>
+    _GLIBCXX20_CONSTEXPR
+    inline _OI
+    move(_II __first, _II __last, _OI __result)
+    {
+      // concept requirements
+      __glibcxx_function_requires(_InputIteratorConcept<_II>)
+      __glibcxx_function_requires(_OutputIteratorConcept<_OI,
+	    typename iterator_traits<_II>::value_type&&>)
+      __glibcxx_requires_can_increment_range(__first, __last, __result);
+
+      return std::__copy_move_a<true>(std::__miter_base(__first),
+				      std::__miter_base(__last), __result);
+    }

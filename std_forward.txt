@@ -1,0 +1,59 @@
+들어온 인자의 값 범주(lvalue/rvalue)를 그대로 보존해서 다음 함수로 넘겨주는 캐스트입니다. 즉, perfect forwarding을 가능하게 하는 도구
+
+forward<T>(x)는 x가 lvalue로 들어오면 lvalue로, rvalue로 들어오면 rvalue로 그대로 전달되게 static_cast<T&&>(x)를 해 줍니다
+
+첫 번째는 lvalue를 받는 오버로드: 파라미터 타입이 U& 형태(여기서 U = remove_reference_t<T>). 반환은 static_cast<T&&>(t)인데, 
+참조 붕괴 규칙 때문에 T가 X&로 추론되면 X& && → X&가 되어 lvalue로 유지됩니다.
+두 번째는 rvalue를 받는 오버로드: 파라미터 타입이 U&&. 여기서 T가 X(또는 X&&)로 추론되면 X&&로 캐스트되어 rvalue 유지가 됩니다
+
+언제/어떻게 쓰나 (정석 패턴)
+전달 참조(= forwarding reference)와 짝으로 씁니다:
+template<class... Args>
+void emplace_back(Args&&... args) {
+    // args 각각의 lvalue/rvalue 성질을 보존해서 생성자에 전달
+    construct(std::forward<Args>(args)...);
+}
+
+Args&&는 전달 참조이므로 호출 인자에 따라 Args가 X& 또는 X로 추론됩니다.
+std::forward<Args>(args)가 lvalue면 lvalue로, rvalue면 rvalue로 그대로 전달합니다.
+std::move와의 차이: move는 무조건 rvalue로 캐스트(lvalue도 rvalue로 바뀜). forward는 보존
+
+std::forward = 값 범주 보존 캐스트 (perfect forwarding의 핵심)
+두 오버로드로 lvalue/rvalue 인자를 정확히 구분 처리
+rvalue 버전의 static_assert는 잘못된 lvalue화를 막기 위함
+템플릿 전달 참조(T&&) + std::forward<T>(x) 조합이 정석
+(단순히 rvalue로 만들고 싶다면 std::move를 사용)
+
+
+  /**
+   *  @addtogroup utilities
+   *  @{
+   */
+
+  /**
+   *  @brief  Forward an lvalue.
+   *  @return The parameter cast to the specified type.
+   *
+   *  This function is used to implement "perfect forwarding".
+   */
+  template<typename _Tp>
+    _GLIBCXX_NODISCARD
+    constexpr _Tp&&
+    forward(typename std::remove_reference<_Tp>::type& __t) noexcept
+    { return static_cast<_Tp&&>(__t); }
+
+  /**
+   *  @brief  Forward an rvalue.
+   *  @return The parameter cast to the specified type.
+   *
+   *  This function is used to implement "perfect forwarding".
+   */
+  template<typename _Tp>
+    _GLIBCXX_NODISCARD
+    constexpr _Tp&&
+    forward(typename std::remove_reference<_Tp>::type&& __t) noexcept
+    {
+      static_assert(!std::is_lvalue_reference<_Tp>::value,
+	  "std::forward must not be used to convert an rvalue to an lvalue");
+      return static_cast<_Tp&&>(__t);
+    }

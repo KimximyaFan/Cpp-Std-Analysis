@@ -1,9 +1,23 @@
 #include <vector>
+#include <iostream>
 
 
 int main()
 {
-    std::vector<int> vec;
+    /*
+        capacity
+        reserve
+        resize
+        clear
+        data
+        
+        erase
+        insert
+        pop_back
+
+
+    */
+    std::vector<int> vec(10);
 
     
 }

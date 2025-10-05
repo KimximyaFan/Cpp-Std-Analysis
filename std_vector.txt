@@ -1,0 +1,572 @@
+대충 생성자중 하나
+vector(const allocator_type& __a) _GLIBCXX_NOEXCEPT
+: _Base(__a) { }
+
+_Base가 뭔지?
+typedef _Vector_base<_Tp, _Alloc>			_Base;
+
+vector가 가지는 struct
+struct _Vector_base
+{
+
+vecotr base 생성자 중 하나
+_Vector_base(size_t __n)
+: _M_impl()
+{ _M_create_storage(__n); }
+
+
+create storage
+_GLIBCXX20_CONSTEXPR
+void
+_M_create_storage(size_t __n)
+{
+this->_M_impl._M_start = this->_M_allocate(__n);
+this->_M_impl._M_finish = this->_M_impl._M_start;
+this->_M_impl._M_end_of_storage = this->_M_impl._M_start + __n;
+}
+
+
+M allocate
+_GLIBCXX20_CONSTEXPR
+pointer
+_M_allocate(size_t __n)
+{
+typedef __gnu_cxx::__alloc_traits<_Tp_alloc_type> _Tr;
+return __n != 0 ? _Tr::allocate(_M_impl, __n) : pointer();
+}
+
+__alloc_traits 에서 allocator_traits의 allocate
+
+/**
+ *  @brief  Allocate memory.
+ *  @param  __a  An allocator.
+ *  @param  __n  The number of objects to allocate space for.
+ *
+ *  Calls @c a.allocate(n)
+*/
+_GLIBCXX_NODISCARD static _GLIBCXX20_CONSTEXPR pointer
+allocate(_Alloc& __a, size_type __n)
+{ return __a.allocate(__n); }
+
+/**
+ *  @brief  Allocate memory.
+ *  @param  __a  An allocator.
+ *  @param  __n  The number of objects to allocate space for.
+ *  @param  __hint Aid to locality.
+ *  @return Memory of suitable size and alignment for @a n objects
+ *          of type @c value_type
+ *
+ *  Returns <tt> a.allocate(n, hint) </tt> if that expression is
+ *  well-formed, otherwise returns @c a.allocate(n)
+*/
+_GLIBCXX_NODISCARD static _GLIBCXX20_CONSTEXPR pointer
+allocate(_Alloc& __a, size_type __n, const_void_pointer __hint)
+{ return _S_allocate(__a, __n, __hint, 0); }
+
+
+/**
+ *  @brief  Allocate memory.
+ *  @param  __a  An allocator.
+ *  @param  __n  The number of objects to allocate space for.
+ *
+ *  Calls @c a.allocate(n)
+*/
+[[__nodiscard__,__gnu__::__always_inline__]]
+static _GLIBCXX20_CONSTEXPR pointer
+allocate(allocator_type& __a, size_type __n)
+{ return __a.allocate(__n); }
+
+
+/**
+ *  @brief  Allocate memory.
+ *  @param  __a  An allocator.
+ *  @param  __n  The number of objects to allocate space for.
+ *  @param  __hint Aid to locality.
+ *  @return Memory of suitable size and alignment for @a n objects
+ *          of type @c value_type
+ *
+ *  Returns <tt> a.allocate(n, hint) </tt>
+*/
+[[__nodiscard__,__gnu__::__always_inline__]]
+static _GLIBCXX20_CONSTEXPR pointer
+allocate(allocator_type& __a, size_type __n,
+    [[maybe_unused]] const_void_pointer __hint)
+{
+#if __cplusplus <= 201703L
+return __a.allocate(__n, __hint);
+#else
+return __a.allocate(__n);
+#endif
+}
+
+
+}
+여기서 _Tr::allocate에 여러 오버로드가 보였죠:
+static pointer allocate(_Alloc& a, size_type n)
+static pointer allocate(_Alloc& a, size_type n, const_void_pointer hint)
+static pointer allocate(allocator_type& a, size_type n)
+static pointer allocate(allocator_type& a, size_type n, const_void_pointer hint)
+_M_allocate(n)은 힌트 없이 (a, n)만 넘기므로, (1) 또는 (3) 이 후보입니다.
+보통 (3) (allocator_type& 전용) 이 더 구체적이라면 그게 선택됩니다.
+하지만 둘 다 하는 일은 동일해요 → return a.allocate(n);
+즉, **최종적으로 “할당자 객체의 멤버 allocate(n)”**가 호출됩니다.
+
+
+
+
+좋은 질문. 핵심은 __a의 정체가 무엇이냐예요.
+__a.allocate(__n)에서 allocate는 _Alloc 타입(= 실제 할당자)의 멤버 함수입니다. 
+어디에 있느냐는 벡터가 쓰는 실제 할당자 타입에 따라 달라집니다.
+
+
+new allocator임
+여기 se 찍힘
+는 두 번째 매개변수에 기본 인자(default argument) 가 달려 있습니다. 그래서 호출할 때
+__a.allocate(__n);        // OK: 두 번째 인자는 기본값(= nullptr)로 대체
+
+
+처럼 한 개만 넘겨도 됩니다
+// NB: __n is permitted to be 0.  The C++ standard says nothing
+      // about what the return value is when __n == 0.
+      _GLIBCXX_NODISCARD _Tp*
+      allocate(size_type __n, const void* = static_cast<const void*>(0))
+      {
+            printf("se");
+#if __cplusplus >= 201103L
+	// _GLIBCXX_RESOLVE_LIB_DEFECTS
+	// 3308. std::allocator<void>().allocate(n)
+	static_assert(sizeof(_Tp) != 0, "cannot allocate incomplete types");
+#endif
+
+	if (__builtin_expect(__n > this->_M_max_size(), false))
+	  {
+	    // _GLIBCXX_RESOLVE_LIB_DEFECTS
+	    // 3190. allocator::allocate sometimes returns too little storage
+	    if (__n > (std::size_t(-1) / sizeof(_Tp)))
+	      std::__throw_bad_array_new_length();
+	    std::__throw_bad_alloc();
+	  }
+
+#if __cpp_aligned_new
+	if (alignof(_Tp) > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+	  {
+	    std::align_val_t __al = std::align_val_t(alignof(_Tp));
+	    return static_cast<_Tp*>(_GLIBCXX_OPERATOR_NEW(__n * sizeof(_Tp),
+							   __al));
+	  }
+#endif
+	return static_cast<_Tp*>(_GLIBCXX_OPERATOR_NEW(__n * sizeof(_Tp)));
+      }
+
+
+
+내부 저장 레이아웃(3포인터 구조)
+
+_Vector_base::_Vector_impl_data 안에 _M_start / _M_finish / _M_end_of_storage 3개 포인터로 메모리를 관리
+즉, [start, finish)가 유효 요소 구간, [finish, end_of_storage)는 여유(capacity)
+
+정의: 연속 메모리 위에 놓인 가변 길이 동적 배열.
+
+연속성 보장: &v[0]부터 sizeof(T)*size() 만큼 연속. data()는 C API와 바로 연동 가능한 포인터를 줌.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// [23.2.4.3] modifiers
+      /**
+       *  @brief  Add data to the end of the %vector.
+       *  @param  __x  Data to be added.
+       *
+       *  This is a typical stack operation.  The function creates an
+       *  element at the end of the %vector and assigns the given data
+       *  to it.  Due to the nature of a %vector this operation can be
+       *  done in constant time if the %vector has preallocated space
+       *  available.
+       */
+
+
+push_back(const T& x) (lvalue 복사 버전)
+
+void push_back(const value_type& __x)
+{
+  if (_M_finish != _M_end_of_storage) {              // ➊ 여유 있음
+    _GLIBCXX_ASAN_ANNOTATE_GROW(1);
+    _Alloc_traits::construct(_M_impl, _M_finish, __x);// ➋ 그 자리에서 '복사 생성'
+    ++_M_finish;                                      // ➌ 끝 포인터 한 칸 전진
+    _GLIBCXX_ASAN_ANNOTATE_GREW(1);
+  } else {                                            // ➍ 여유 없음
+    _M_realloc_append(__x);                           //    재할당 + 맨 끝에 새로 붙임
+  }
+}
+
+
+➋의 construct(...)가 바로 placement new로 “초기화되지 않은 저장소”에 객체를 그 자리에서 생성하는 호출이야. (앞서 네가 본 그 함수)
+
+여기서는 인자가 __x (lvalue)이므로 복사 생성자가 사용돼.
+
+
+
+push_back(T&& x) (rvalue 이동 버전)
+
+void push_back(value_type&& __x) { emplace_back(std::move(__x)); }
+
+이동 가능한 값이 들어오면 굳이 복사하지 말고, 그 자리에 바로 생성(emplace) 하도록 emplace_back으로 위임한다.
+이렇게 하면 이동 생성자(or 적절한 생성자)가 골라져서 불필요한 임시/복사를 피할 수 있어.
+
+
+
+push_back(const T&) : 복사해서 끝에 하나 붙임 (여유 없으면 재할당)
+push_back(T&&) : 이동을 활용하려고 emplace_back(std::move(x))로 위임
+
+
+
+
+내부적으로는 allocator_traits::construct → placement new로 “그 자리에서” 객체를 만든다.
+여유 없으면 _M_realloc_append로 새 버퍼 만들고 요소들 “안전하게” 옮긴 뒤 새 요소를 생성
+
+const T& (상수 lvalue 참조)
+무엇: “읽기 전용 참조”. lvalue(이름 있는 객체)에도, 임시 객체(rvalue) 에도 바인딩됨.
+효과
+인자를 복사하지 않고 참조만 함 → 큰 객체를 읽기 전용으로 받을 때 좋음.
+임시에 바인딩되면 수명 연장됨(함수 끝까지 살아있음).
+제약: 가리키는 값을 바꿀 수 없음.
+void foo(const std::string& s) { /* s 읽기만 */ }
+std::string a = "hi";
+foo(a);              // lvalue OK
+foo(std::string("x"));// rvalue(임시) OK, 수명 연장
+
+
+T&& (rvalue 참조)
+무엇: “임시/이동 가능한 것(rvalue)에 바인딩”하는 참조.
+효과
+move 생성/대입을 활성화 → 비싼 복사를 피함.
+lvalue에는 바로 못 바인딩(필요하면 std::move(lv)).
+주의점
+이름 붙은 rvalue 참조 변수 자체는 lvalue다 → 다시 rvalue로 쓰려면 std::move 필요.
+const T&&는 거의 쓰지 않음(대부분의 move가 const에선 막힘).
+
+std::move(x): 무조건 rvalue로 캐스트. “이 객체에서 자원 뺏어가도 좋아” 신호.
+std::forward<T>(x): 원래 인자의 값범주 유지 전달. (템플릿 포워딩에서만 의미)
+
+const + move: const T는 보통 이동 대상 아님. std::move(const T&)는 대개 복사로 귀결(이동 생성자가 T&&만 받기 때문).
+수명 연장: const T&는 rvalue에 바인딩 시 수명 연장. T&&도 함수 인자로 받으면 그 인자 자체 수명은 함수 끝까지.
+작은 타입(int, 작은 POD 등)은 그냥 값으로 받는 게 보통 더 단순하고 빠를 수 있음.
+
+“읽기 전용, 크고 복사 비쌈” → const T&
+“임시/소유권 이동 활용” → T&& 오버로드 제공 + 내부에서 이동 사용
+“일반 템플릿으로 받았다가 그대로 넘김” → T&&(포워딩 참조) + std::forward
+“작고 싸다(int 등)” → 값으로 받기
+
+먼저, &는 두 가지가 전혀 다름
+타입 문맥에서의 & : “lvalue 참조”를 뜻함.
+예) int& r = x; → r은 x라는 이름 있는 값(lvalue) 를 가리킴.
+표현식(식) 문맥에서의 & : “주소 연산자” (address-of).
+예) &x → x의 주소값.
+같은 기호지만 “타입에 붙으면 참조”, “식에 붙으면 주소연산자”라고 보면 편해.
+
+그럼 &&는?
+타입 문맥에서의 && : “rvalue 참조”.
+→ “임시/더 이상 쓸 의도가 약한 값”에 바인딩하려고 만든 참조야.
+표현식 문맥에서의 && : “논리 AND” (그리고).
+→ 이건 완전히 다른 뜻.
+즉, T&&는 “더 이상 원본을 유지할 필요가 없는(대개 임시) 대상을 소유권 이동(move) 용도로 붙잡는 손잡이”라고 생각하면 됨.
+
+왜 굳이 rvalue 참조가 필요할까?
+큰 객체를 함수에 넘길 때 복사는 비쌈 → 이동이 있으면 싸다.
+이동을 쓰려면 “이 값은 훔쳐가도 된다(다신 안 쓸 거다)”는 신호가 필요 → 그 역할이 T&&.
+벡터 재할당, 문자열 붙이기 등 성능 핵심에서 결정적.
+
+void use_copy(const std::string& s);   // 복사 필요할 수도
+void use_move(std::string&& s);        // 이동 사용하려고 받음
+std::string a = "hello";
+use_copy(a);                 // OK (lvalue)
+use_copy(std::string("x"));  // OK (임시, 수명연장)
+use_move(std::string("tmp"));// OK (임시 rvalue)
+use_move(std::move(a));      // OK (a를 더 안 쓰겠다는 의사표시)
+
+
+alloc_traits
+
+// overload construct for non-standard pointer types
+  template<typename _Ptr, typename... _Args>
+    [[__gnu__::__always_inline__]]
+    static _GLIBCXX14_CONSTEXPR
+    std::__enable_if_t<__is_custom_pointer<_Ptr>::value>
+    construct(_Alloc& __a, _Ptr __p, _Args&&... __args)
+    noexcept(noexcept(_Base_type::construct(__a, std::__to_address(__p),
+              std::forward<_Args>(__args)...)))
+    {
+_Base_type::construct(__a, std::__to_address(__p),
+          std::forward<_Args>(__args)...);
+    }
+
+template<typename _Tp, typename... _Args>
+	static _GLIBCXX14_CONSTEXPR
+	_Require<__and_<__not_<__has_construct<_Tp, _Args...>>,
+			       is_constructible<_Tp, _Args...>>>
+	_S_construct(_Alloc&, _Tp* __p, _Args&&... __args)
+	noexcept(std::is_nothrow_constructible<_Tp, _Args...>::value)
+	{
+#if __cplusplus <= 201703L
+	  ::new((void*)__p) _Tp(std::forward<_Args>(__args)...);
+#else
+	  std::construct_at(__p, std::forward<_Args>(__args)...);
+#endif
+	}
+
+
+
+
+C++에서 자바처럼 “참조 보관” 효과를 내고 싶다면 vector<Foo*> vector<unique_ptr<Foo>>
+vector<shared_ptr<Foo>>, 또는 vector<reference_wrapper<Foo>> 같은 간접 레이어를 담아야 해요
+
+재할당(reallocation)과 주소 안정성
+vector<T>는 용량이 차면 더 큰 버퍼로 옮기며, 그 과정에서 요소들을 이동/복사합니다.
+그래서 요소의 주소/참조/포인터가 무효화될 수 있어요
+
+참조가 필요하면 포인터/스마트포인터를 담자
+
+vector<unique_ptr<T>> : 단일 소유권, 이동만 허용
+
+vector<shared_ptr<T>> : 공유 소유권
+
+vector<T*> : 생명주기 직접 관리 필요(주의)
+
+vector<reference_wrapper<T>> : 레퍼런스 흉내 (소유권 없음)
+
+
+
+
+
+/*
+  EMPLACE_BACK
+*/
+
+#if __cplusplus >= 201103L
+  template<typename _Tp, typename _Alloc>
+    template<typename... _Args>
+#if __cplusplus > 201402L
+      _GLIBCXX20_CONSTEXPR
+      typename vector<_Tp, _Alloc>::reference
+#else
+      void
+#endif
+      vector<_Tp, _Alloc>::
+      emplace_back(_Args&&... __args)
+      {
+	if (this->_M_impl._M_finish != this->_M_impl._M_end_of_storage)
+	  {
+	    _GLIBCXX_ASAN_ANNOTATE_GROW(1);
+	    _Alloc_traits::construct(this->_M_impl, this->_M_impl._M_finish,
+				     std::forward<_Args>(__args)...);
+	    ++this->_M_impl._M_finish;
+	    _GLIBCXX_ASAN_ANNOTATE_GREW(1);
+	  }
+	else
+	  _M_realloc_append(std::forward<_Args>(__args)...);
+#if __cplusplus > 201402L
+	return back();
+#endif
+      }
+#endif
+
+
+
+std::vector<std::pair<int,int>> v;
+
+// 임시 pair 생성 + move 1회
+v.push_back(std::pair<int,int>(1,2));
+
+// 임시 없이 바로 그 자리에서 생성
+v.emplace_back(1,2);
+
+// 이미 있는 객체라면 둘 다 사실상 동일
+std::pair<int,int> p{3,4};
+v.push_back(std::move(p));
+v.emplace_back(std::move(p)); // 거의 같은 코드로 최적화
+
+std::vector<std::string> v;
+std::string s = "hi";
+v.emplace_back(s);            // s는 lvalue → _Args = std::string& → 매개변수 타입은 std::string&
+                              // 내부에서 std::forward<_Args>(__args) → 복사 생성 호출
+v.emplace_back(std::move(s)); // rvalue → _Args = std::string  → 매개변수 타입은 std::string&&
+                              // 내부에서 std::forward<_Args>(__args) → 이동 생성 호출
+v.emplace_back(10, 'x');      // 문자열 길이 10, 'x'로 채우는 생성자에
+                              // 인자들을 '그 자리에서' 직접 전달(임시 객체 없음)
+
+                              
+여기서 std::forward<_Args>(__args)...가 값 범주 보존을 해 줍니다.
+lvalue로 들어온 건 lvalue로, rvalue로 들어온 건 rvalue로 그대로 전달 → 복사/이동/직접생성이 정확히 매칭.
+
+의도치 않은 변환/오버로드를 피하고 싶을 때
+emplace_back은 perfect forwarding이라 암시 변환 가능한 여러 생성자 중 예상 밖 선택이 될 수 있습니다.
+push_back(T{...})처럼 T를 명시적으로 구성해서 넘기면, 어떤 생성자가 쓰였는지 한눈에 보이고 컴파일 오류도 더 빨리 납니다.
+
+
+
+
+
+
+/*
+      EMPLACE
+*/
+
+
+/**
+       *  @brief  Inserts an object in %vector before specified iterator.
+       *  @param  __position  A const_iterator into the %vector.
+       *  @param  __args  Arguments.
+       *  @return  An iterator that points to the inserted data.
+       *
+       *  This function will insert an object of type T constructed
+       *  with T(std::forward<Args>(args)...) before the specified location.
+       *  Note that this kind of operation could be expensive for a %vector
+       *  and if it is frequently used the user should consider using
+       *  std::list.
+       */
+template<typename... _Args>
+_GLIBCXX20_CONSTEXPR
+iterator
+emplace(const_iterator __position, _Args&&... __args)
+{ return _M_emplace_aux(__position, std::forward<_Args>(__args)...); }
+
+
+
+
+template<typename _Tp, typename _Alloc>
+template<typename... _Args>
+  _GLIBCXX20_CONSTEXPR
+  auto
+  vector<_Tp, _Alloc>::
+  _M_emplace_aux(const_iterator __position, _Args&&... __args)
+  -> iterator
+  {
+const auto __n = __position - cbegin();
+if (this->_M_impl._M_finish != this->_M_impl._M_end_of_storage)
+if (__position == cend())
+  {
+    _GLIBCXX_ASAN_ANNOTATE_GROW(1);
+    _Alloc_traits::construct(this->_M_impl, this->_M_impl._M_finish,
+            std::forward<_Args>(__args)...);
+    ++this->_M_impl._M_finish;
+    _GLIBCXX_ASAN_ANNOTATE_GREW(1);
+  }
+else
+  {
+    // We need to construct a temporary because something in __args...
+    // could alias one of the elements of the container and so we
+    // need to use it before _M_insert_aux moves elements around.
+    _Temporary_value __tmp(this, std::forward<_Args>(__args)...);
+    _M_insert_aux(begin() + __n, std::move(__tmp._M_val()));
+  }
+else
+_M_realloc_insert(begin() + __n, std::forward<_Args>(__args)...);
+
+return iterator(this->_M_impl._M_start + __n);
+  }
+
+
+좋아요—이건 std::vector 내부 헬퍼인 **_M_emplace_aux**로, “지정 위치에 emplace/insert”를 처리하는 핵심 루틴입니다. 
+한 줄 요약: 용량(capacity)·위치(끝/중간)·자기참조(alias) 가능성에 따라 분기해서 안전하게 한 칸 삽입하고, 삽입된 위치의 이터레이터를 반환해요
+
+
+중간 삽입: 꼬리 구간을 밀어야 하므로 더 복잡.
+먼저 **_Temporary_value**에 새 원소를 임시로 구성합니다.
+이유: __args... 중에 자기 컨테이너의 원소를 참조하는 인자가 있을 수 있어요(자기참조/alias). 
+그 상태에서 바로 뒤쪽 요소들을 이동/재배치하면 참조가 깨질 수 있습니다.
+
+그래서 먼저 안전한 임시 저장소에 새 값 하나를 완성해 두고,
+그다음 _M_insert_aux가 중간에 한 칸을 만들기 위해 요소들을 뒤로 이동한 뒤, 최종적으로 그 임시 값을 이동해 넣습니다.
+
+_M_insert_aux(pos, value)는 “pos 이후 요소들 이동 → 빈 칸에 value 배치”를 담당하는 내부 루틴.
+
+
+
+template<typename _Tp, typename _Alloc>
+    template<typename _Arg>
+      _GLIBCXX20_CONSTEXPR
+      void
+      vector<_Tp, _Alloc>::
+      _M_insert_aux(iterator __position, _Arg&& __arg)
+#else
+  template<typename _Tp, typename _Alloc>
+    void
+    vector<_Tp, _Alloc>::
+    _M_insert_aux(iterator __position, const _Tp& __x)
+#endif
+    {
+      _GLIBCXX_ASAN_ANNOTATE_GROW(1);
+      _Alloc_traits::construct(this->_M_impl, this->_M_impl._M_finish,
+			       _GLIBCXX_MOVE(*(this->_M_impl._M_finish - 1)));
+      ++this->_M_impl._M_finish;
+      _GLIBCXX_ASAN_ANNOTATE_GREW(1);
+#if __cplusplus < 201103L
+      _Tp __x_copy = __x;
+#endif
+      _GLIBCXX_MOVE_BACKWARD3(__position.base(),
+			      this->_M_impl._M_finish - 2,
+			      this->_M_impl._M_finish - 1);
+#if __cplusplus < 201103L
+      *__position = __x_copy;
+#else
+      *__position = std::forward<_Arg>(__arg);
+#endif
+    }
+
+끝에 여유 한 칸 만들기 (끝 원소 복제)
+
+_GLIBCXX_ASAN_ANNOTATE_GROW(1);
+_Alloc_traits::construct(_M_impl, _M_impl._M_finish,
+                         _GLIBCXX_MOVE(*(_M_impl._M_finish - 1)));
+++_M_impl._M_finish;
+_GLIBCXX_ASAN_ANNOTATE_GREW(1);
+
+
+finish-1(현재 마지막 원소)을 이동(또는 복사) 해서 finish 위치에 배치-생성(placement new) 합니다.
+→ 즉, 마지막 원소를 한 개 더 만들어 벡터 크기를 +1로 늘려요.
+
+이렇게 먼저 “끝에 1칸을 확보”해 둬야, 뒤에서 겹치는 구간을 뒤로 밀 때 덮어쓰기(corruption) 가 나지 않습니다.
+(뒤에서부터 이동하는 move_backward 전략을 쓰려면, 도착지의 맨 끝 칸이 유효해야 해요.)
+
+ASan 애너테이션은 “사용 구간이 1 증가”했음을 런타임에 알려 줍니다.
+
+삽입 지점부터 꼬리까지 한 칸씩 뒤로 민다
+
+_GLIBCXX_MOVE_BACKWARD3(__position.base(),
+                        _M_impl._M_finish - 2,
+                        _M_impl._M_finish - 1);
+
+
+의미상 std::move_backward(__position, old_end, new_end);와 같은 동작.
+
+범위 [__position, old_end)를 한 칸 뒤로 옮겨, 삽입 위치 __position에 빈칸을 만든다.
+
+매크로인 이유는 trivially movable/copyable 타입에서 memmove 같은 더 빠른 경로로 최적화하기 위해(구현체 내부 최적화).
+
+빈칸에 새 값 써 넣기
+
+#if __cplusplus < 201103L
+  *__position = __x_copy;          // C++03: 미리 복사해둔 값 대입
+#else
+  *__position = std::forward<_Arg>(__arg);  // C++11+: 완전 전달로 대입
+#endif
+
+
+C++11 이후에는 _Arg&& + std::forward로 lvalue면 복사, rvalue면 이동 대입이 정확히 선택됩니다.
+
+(여기 오기 전에 상위 레벨 _M_emplace_aux에서 자기참조(alias) 위험을 피하려고 _Temporary_value에 새 값을 먼저 안전하게 만들어 놓고, 
+그걸 std::move로 전달해주는 경로를 타요. 그래서 여기서는 안심하고 대입만 하면 됩니다.)
+
+
+#define _GLIBCXX_MOVE_BACKWARD3(_Tp, _Up, _Vp) std::move_backward(_Tp, _Up, _Vp)
