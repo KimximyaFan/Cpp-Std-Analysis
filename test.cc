@@ -1,23 +1,42 @@
 #include <vector>
 #include <iostream>
+#include <list>
 
 
 int main()
 {
     /*
-        capacity
-        reserve
-        resize
+        assign
+        front
+        back
+        begin
+        end
         clear
-        data
-        
+
+        emplace
+        emplace back
+        emplace front
+
+        empty
         erase
         insert
-        pop_back
+        merge
+        pop back
+        pop front
+        push back
+        push front
 
+        remove
+        removeif
 
+        size
+        sort
+        splice
+        reverse
+        swap
+        unique
     */
-    std::vector<int> vec(10);
+    std::list<int> list(10);
 
-    
+    list.
 }

@@ -1,6 +1,40 @@
+/**
+   *  @brief A standard container which offers fixed time access to
+   *  individual elements in any order.
+   *
+   *  @ingroup sequences
+   *  @headerfile vector
+   *  @since C++98
+   *
+   *  @tparam _Tp  Type of element.
+   *  @tparam _Alloc  Allocator type, defaults to allocator<_Tp>.
+   *
+   *  Meets the requirements of a <a href="tables.html#65">container</a>, a
+   *  <a href="tables.html#66">reversible container</a>, and a
+   *  <a href="tables.html#67">sequence</a>, including the
+   *  <a href="tables.html#68">optional sequence requirements</a> with the
+   *  %exception of @c push_front and @c pop_front.
+   *
+   *  In some terminology a %vector can be described as a dynamic
+   *  C-style array, it offers fast and efficient access to individual
+   *  elements in any order and saves the user from worrying about
+   *  memory and size allocation.  Subscripting ( @c [] ) access is
+   *  also provided as with C-style arrays.
+  */
+
 대충 생성자중 하나
 vector(const allocator_type& __a) _GLIBCXX_NOEXCEPT
 : _Base(__a) { }
+
+/*
+  Size
+*/
+/**  Returns the number of elements in the %vector.  */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+size_type
+size() const _GLIBCXX_NOEXCEPT
+{ return size_type(this->_M_impl._M_finish - this->_M_impl._M_start); }
+
 
 _Base가 뭔지?
 typedef _Vector_base<_Tp, _Alloc>			_Base;
@@ -119,7 +153,11 @@ __a.allocate(__n)에서 allocate는 _Alloc 타입(= 실제 할당자)의 멤버 
 어디에 있느냐는 벡터가 쓰는 실제 할당자 타입에 따라 달라집니다.
 
 
-new allocator임
+
+
+
+
+bits/new_allocator.h임
 여기 se 찍힘
 는 두 번째 매개변수에 기본 인자(default argument) 가 달려 있습니다. 그래서 호출할 때
 __a.allocate(__n);        // OK: 두 번째 인자는 기본값(= nullptr)로 대체
@@ -157,6 +195,171 @@ __a.allocate(__n);        // OK: 두 번째 인자는 기본값(= nullptr)로 �
 #endif
 	return static_cast<_Tp*>(_GLIBCXX_OPERATOR_NEW(__n * sizeof(_Tp)));
       }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+길이 체크
+_M_check_len(size_type __n, const char* __s) const
+      {
+	if (max_size() - size() < __n)
+	  __throw_length_error(__N(__s));
+
+	const size_type __len = size() + (std::max)(size(), __n);
+	return (__len < size() || __len > max_size()) ? max_size() : __len;
+      }
+
+_M_check_len(1u, "vector::_M_realloc_append");
+여기서 n=1u를 넘기면:
+필수 요구량 검사: size()+1을 담을 수 없으면 즉시 length_error.
+성장 후보 계산: len = size() + max(size(), 1)
+size() == 0 → len = 1 (첫 용량 1)
+size() ≥ 1 → len ≈ 2*size() (사실상 두 배 성장)
+오버플로·상한 조정 후, 그 값을 새 capacity 후보로 돌려줍니다.
+즉, 재할당+append 경로에서 “한 칸만 더” 필요한 상황이므로 n=1을 넣고, 
+그에 맞춰 두 배 성장(또는 size+1) 규칙으로 새 용량을 정하는 단계예요. 이렇게 해야 push_back의 상각 O(1) 을 보장할 수 있습니다
+
+
+
+
+초과시 재할당 코드
+
+_M_realloc_append(_Args&&... __args)
+#else
+template<typename _Tp, typename _Alloc>
+  void
+  vector<_Tp, _Alloc>::
+  _M_realloc_append(const _Tp& __x)
+#endif
+  {
+    const size_type __len = _M_check_len(1u, "vector::_M_realloc_append");
+    if (__len <= 0)
+__builtin_unreachable ();
+    pointer __old_start = this->_M_impl._M_start;
+    pointer __old_finish = this->_M_impl._M_finish;
+    const size_type __elems = end() - begin();
+    pointer __new_start(this->_M_allocate(__len));
+    pointer __new_finish(__new_start);
+
+    // RAII guard for allocated storage.
+    struct _Guard
+    {
+pointer _M_storage;	    // Storage to deallocate
+size_type _M_len;
+_Tp_alloc_type& _M_alloc;
+
+_GLIBCXX20_CONSTEXPR
+_Guard(pointer __s, size_type __l, _Tp_alloc_type& __a)
+: _M_storage(__s), _M_len(__l), _M_alloc(__a)
+{ }
+
+_GLIBCXX20_CONSTEXPR
+~_Guard()
+{
+  if (_M_storage)
+    __gnu_cxx::__alloc_traits<_Tp_alloc_type>::
+      deallocate(_M_alloc, _M_storage, _M_len);
+}
+
+    private:
+_Guard(const _Guard&);
+    };
+
+    {
+_Guard __guard(__new_start, __len, _M_impl);
+
+// The order of the three operations is dictated by the C++11
+// case, where the moves could alter a new element belonging
+// to the existing vector.  This is an issue only for callers
+// taking the element by lvalue ref (see last bullet of C++11
+// [res.on.arguments]).
+
+// If this throws, the existing elements are unchanged.
+#if __cplusplus >= 201103L
+_Alloc_traits::construct(this->_M_impl,
+        std::__to_address(__new_start + __elems),
+        std::forward<_Args>(__args)...);
+#else
+_Alloc_traits::construct(this->_M_impl,
+        __new_start + __elems,
+        __x);
+#endif
+
+#if __cplusplus >= 201103L
+if _GLIBCXX17_CONSTEXPR (_S_use_relocate())
+  {
+    // Relocation cannot throw.
+    __new_finish = _S_relocate(__old_start, __old_finish,
+              __new_start, _M_get_Tp_allocator());
+    ++__new_finish;
+  }
+else
+#endif
+  {
+    // RAII type to destroy initialized elements.
+    struct _Guard_elts
+    {
+      pointer _M_first, _M_last;  // Elements to destroy
+      _Tp_alloc_type& _M_alloc;
+
+      _GLIBCXX20_CONSTEXPR
+      _Guard_elts(pointer __elt, _Tp_alloc_type& __a)
+      : _M_first(__elt), _M_last(__elt + 1), _M_alloc(__a)
+      { }
+
+      _GLIBCXX20_CONSTEXPR
+      ~_Guard_elts()
+      { std::_Destroy(_M_first, _M_last, _M_alloc); }
+
+    private:
+      _Guard_elts(const _Guard_elts&);
+    };
+
+    // Guard the new element so it will be destroyed if anything throws.
+    _Guard_elts __guard_elts(__new_start + __elems, _M_impl);
+
+    __new_finish = std::__uninitialized_move_if_noexcept_a(
+          __old_start, __old_finish,
+          __new_start, _M_get_Tp_allocator());
+
+    ++__new_finish;
+
+    // New storage has been fully initialized, destroy the old elements.
+    __guard_elts._M_first = __old_start;
+    __guard_elts._M_last = __old_finish;
+  }
+__guard._M_storage = __old_start;
+__guard._M_len = this->_M_impl._M_end_of_storage - __old_start;
+    }
+    // deallocate should be called before assignments to _M_impl,
+    // to avoid call-clobbering
+
+    this->_M_impl._M_start = __new_start;
+    this->_M_impl._M_finish = __new_finish;
+    this->_M_impl._M_end_of_storage = __new_start + __len;
+  }
+
+
+
+
+
+
+
 
 
 
@@ -570,3 +773,940 @@ C++11 이후에는 _Arg&& + std::forward로 lvalue면 복사, rvalue면 이동 �
 
 
 #define _GLIBCXX_MOVE_BACKWARD3(_Tp, _Up, _Vp) std::move_backward(_Tp, _Up, _Vp)
+
+
+
+/*
+  Max
+
+*/
+
+max_size() const _GLIBCXX_NOEXCEPT
+      { return _S_max_size(_M_get_Tp_allocator()); }
+
+static _GLIBCXX20_CONSTEXPR size_type
+_S_max_size(const _Tp_alloc_type& __a) _GLIBCXX_NOEXCEPT
+{
+// std::distance(begin(), end()) cannot be greater than PTRDIFF_MAX,
+// and realistically we can't store more than PTRDIFF_MAX/sizeof(T)
+// (even if std::allocator_traits::max_size says we can).
+const size_t __diffmax
+= __gnu_cxx::__numeric_traits<ptrdiff_t>::__max / sizeof(_Tp);
+const size_t __allocmax = _Alloc_traits::max_size(__a);
+return (std::min)(__diffmax, __allocmax);
+}
+
+static const bool __is_signed = (_Value)(-1) < 0;
+      static const int __digits
+	= __is_integer_nonstrict<_Value>::__width - __is_signed;
+
+static const _Value __max = __is_signed
+? (((((_Value)1 << (__digits - 1)) - 1) << 1) + 1)
+: ~(_Value)0;
+    static const _Value __min = __is_signed ? -__max - 1 : (_Value)0;
+  };
+
+  __attribute__((__always_inline__))
+      _GLIBCXX_CONSTEXPR size_type
+      _M_max_size() const _GLIBCXX_USE_NOEXCEPT
+      {
+#if __PTRDIFF_MAX__ < __SIZE_MAX__
+	return std::size_t(__PTRDIFF_MAX__) / sizeof(_Tp);
+#else
+	return std::size_t(-1) / sizeof(_Tp);
+#endif
+      }
+    };
+
+짧게: **max_size()는 “이론상 담을 수 있는 최대 원소 개수”**예요.
+실제 값은 **할당자(allocator)**와 플랫폼 정수 폭에 따라 정해지지만, 보통 이렇게 생각하면 됩니다:
+보통 얼마인가?
+기본 할당자(std::allocator) + 64비트 환경이면 대략
+≈ (2^63 - 1) / sizeof(T) 개
+(구현에 따라 size_t 한계(2^64−1) 대신 ptrdiff_t 한계(2^63−1)를 함께 고려해서 더 작은 쪽으로 잡는 경우가 많습니다.)
+32비트라면 대략
+≈ (2^31 - 1) / sizeof(T) 개
+예시(64비트 기준, 대략치)
+std::vector<char> → ~9.22e18 개
+std::vector<int> (4바이트) → ~2.30e18 개
+std::vector<double> (8바이트) → ~1.15e18 개
+왜 그렇지?
+max_size()는 내부적으로 대개 **min( allocator_traits<Alloc>::max_size(a), 정수 한계 기반 상한 )**을 돌려줍니다.
+기본 할당자의 max_size(a)는 보통 **std::numeric_limits<size_t>::max() / sizeof(T)**와 동등하고, 
+구현은 여기에 포인터 차이 한계(ptrdiff_t 한계) 같은 추가 상한을 걸어 더 작은 쪽을 택합니다.
+현실적으로는?
+이 값은 이론치입니다. 실제로는
+가상 메모리/주소 공간,
+연속 블록 요구(벡터는 연속),
+운영체제/런타임 제한
+때문에 훨씬 전에 **std::bad_alloc**이 납니다.
+요약: **“보통 64비트에선 (2^63−1)/sizeof(T) 정도”**라고 기억해 두면 됩니다.
+
+
+
+/*
+  Capacity
+*/
+
+size_type
+capacity() const _GLIBCXX_NOEXCEPT
+{
+return size_type(this->_M_impl._M_end_of_storage
+    - this->_M_impl._M_start);
+}
+capacity()는 “저장되는 값”이 아니라 _M_end_of_storage - _M_start로 계산되는 파생값
+
+
+/*
+  Relocate
+  조건 통과시 좀 빠르게 수행하는, 뭐 이동후 재할당 같은거
+*/
+template<typename _Tp, typename _Up, typename _Allocator>
+_GLIBCXX20_CONSTEXPR
+inline void
+__relocate_object_a(_Tp* __restrict __dest, _Up* __restrict __orig,
+  _Allocator& __alloc)
+noexcept(noexcept(std::allocator_traits<_Allocator>::construct(__alloc,
+    __dest, std::move(*__orig)))
+    && noexcept(std::allocator_traits<_Allocator>::destroy(
+      __alloc, std::__addressof(*__orig))))
+{
+  typedef std::allocator_traits<_Allocator> __traits;
+  __traits::construct(__alloc, __dest, std::move(*__orig));
+  __traits::destroy(__alloc, std::__addressof(*__orig));
+}
+
+/*
+
+  Reserve
+*/
+
+template<typename _Tp, typename _Alloc>
+_GLIBCXX20_CONSTEXPR
+void
+vector<_Tp, _Alloc>::
+reserve(size_type __n)
+{
+  if (__n > this->max_size())
+__throw_length_error(__N("vector::reserve"));
+  if (this->capacity() < __n)
+{
+const size_type __old_size = size();
+pointer __tmp;
+#if __cplusplus >= 201103L
+if _GLIBCXX17_CONSTEXPR (_S_use_relocate())
+  {
+    __tmp = this->_M_allocate(__n);
+    _S_relocate(this->_M_impl._M_start, this->_M_impl._M_finish,
+    __tmp, _M_get_Tp_allocator());
+  }
+else
+#endif
+  {
+    __tmp = _M_allocate_and_copy(__n,
+_GLIBCXX_MAKE_MOVE_IF_NOEXCEPT_ITERATOR(this->_M_impl._M_start),
+_GLIBCXX_MAKE_MOVE_IF_NOEXCEPT_ITERATOR(this->_M_impl._M_finish));
+    std::_Destroy(this->_M_impl._M_start, this->_M_impl._M_finish,
+      _M_get_Tp_allocator());
+  }
+_GLIBCXX_ASAN_ANNOTATE_REINIT;
+_M_deallocate(this->_M_impl._M_start,
+  this->_M_impl._M_end_of_storage
+  - this->_M_impl._M_start);
+this->_M_impl._M_start = __tmp;
+this->_M_impl._M_finish = __tmp + __old_size;
+this->_M_impl._M_end_of_storage = this->_M_impl._M_start + __n;
+}
+}
+
+
+
+흐름 요약
+
+요청 검증
+
+if (n > max_size()) throw length_error;
+담을 수 있는 이론적 최대치 초과면 예외.
+이미 충분하면 종료
+if (capacity() >= n) return;  // 아무 것도 안 함
+
+증설이 필요할 때
+const size_type old_size = size();
+pointer tmp;
+새 저장소 포인터 tmp를 마련해 기존 요소들을 옮긴 뒤 교체합니다.
+
+요소 이전 전략 (두 갈래)
+A) _S_use_relocate()가 참일 때 (C++17 constexpr 분기)
+tmp = _M_allocate(n);                   // 새 버퍼 n개 확보
+_S_relocate(start, finish, tmp, alloc); // 'relocate'로 일괄 이전
+여기서 relocate는 구현체 최적화 경로예요. 타입/할당자 특성에 따라
+memmove에 준하는 바이트 단위 이전(trivially move 가능 시),
+아니면 move 생성 기반 이전
+를 사용합니다. 목적: 빠르고 예외 안전한 대량 이동.
+B) 그렇지 않으면 (일반 경로)
+tmp = _M_allocate_and_copy(
+        n,
+        make_move_if_noexcept_iterator(start),
+        make_move_if_noexcept_iterator(finish));
+std::_Destroy(start, finish, alloc);
+새 버퍼를 잡으면서 요소를 하나씩 구성(construct) 합니다.
+make_move_if_noexcept_iterator 때문에
+T의 이동 생성자가 noexcept면 move,
+아니면 copy를 택해 강한 예외 보장을 최대한 유지합니다.
+그 다음 옛 범위의 소멸자 호출로 정리.
+
+포인터 스왑(상태 갱신)
+
+_M_start = tmp;
+_M_finish = tmp + old_size;        // size는 유지
+_M_end_of_storage = _M_start + n;  // capacity = n
+
+핵심 포인트
+
+reserve(n)은 size는 그대로, capacity만 n(이상) 으로 키웁니다.
+
+실제로 버퍼를 갈아끼운 경우, 기존 포인터/참조/이터레이터는 모두 무효화됩니다.
+
+이전 전략은 타입 특성에 따라 달라집니다.
+
+가능한 경우 relocate 최적화(바이트 이전/빠름).
+
+아니면 move-if-noexcept로 예외 안전을 고려한 개별 이동/복사
+
+
+버퍼를 갈아끼운다”(reallocate) = 새 메모리 블록을 할당해서 요소들을 옮긴다는 뜻.
+→ data()가 가리키는 베이스 주소 자체가 바뀜. 모든 요소의 주소가 전부 바뀝니다.
+
+reserve에서 보던 _S_relocate 경로도 결국 새 버퍼로 옮기는 코드예요.
+→ 주소 바뀝니다. 차이는 옮기는 방식(trivial 타입이면 memmove 유사 최적화 가능)이지, 같은 주소를 유지하는 게 아님.
+
+
+
+
+/*
+  Resize
+
+*/
+
+/**
+ *  @brief  Resizes the %vector to the specified number of elements.
+ *  @param  __new_size  Number of elements the %vector should contain.
+ *
+ *  This function will %resize the %vector to the specified
+ *  number of elements.  If the number is smaller than the
+ *  %vector's current size the %vector is truncated, otherwise
+ *  default constructed elements are appended.
+ */
+_GLIBCXX20_CONSTEXPR
+void
+resize(size_type __new_size)
+{
+if (__new_size > size())
+_M_default_append(__new_size - size());
+else if (__new_size < size())
+_M_erase_at_end(this->_M_impl._M_start + __new_size);
+}
+
+
+/**
+ *  @brief  Resizes the %vector to the specified number of elements.
+ *  @param  __new_size  Number of elements the %vector should contain.
+ *  @param  __x  Data with which new elements should be populated.
+ *
+ *  This function will %resize the %vector to the specified
+ *  number of elements.  If the number is smaller than the
+ *  %vector's current size the %vector is truncated, otherwise
+ *  the %vector is extended and new elements are populated with
+ *  given data.
+ */
+_GLIBCXX20_CONSTEXPR
+void
+resize(size_type __new_size, const value_type& __x)
+{
+if (__new_size > size())
+_M_fill_insert(end(), __new_size - size(), __x);
+else if (__new_size < size())
+_M_erase_at_end(this->_M_impl._M_start + __new_size);
+}
+
+
+// Default append
+template<typename _Tp, typename _Alloc>
+    _GLIBCXX20_CONSTEXPR
+    void
+    vector<_Tp, _Alloc>::
+_M_default_append(size_type __n)
+{
+  if (__n != 0)
+{
+const size_type __size = size();
+size_type __navail = size_type(this->_M_impl._M_end_of_storage
+        - this->_M_impl._M_finish);
+
+if (__size > max_size() || __navail > max_size() - __size)
+  __builtin_unreachable();
+
+if (__navail >= __n)
+  {
+    _GLIBCXX_ASAN_ANNOTATE_GROW(__n);
+    this->_M_impl._M_finish =
+std::__uninitialized_default_n_a(this->_M_impl._M_finish,
+          __n, _M_get_Tp_allocator());
+    _GLIBCXX_ASAN_ANNOTATE_GREW(__n);
+  }
+else
+  {
+    // Make local copies of these members because the compiler thinks
+    // the allocator can alter them if 'this' is globally reachable.
+    pointer __old_start = this->_M_impl._M_start;
+    pointer __old_finish = this->_M_impl._M_finish;
+
+    const size_type __len =
+_M_check_len(__n, "vector::_M_default_append");
+    pointer __new_start(this->_M_allocate(__len));
+
+    // RAII guard for allocated storage.
+    struct _Guard
+    {
+pointer _M_storage;         // Storage to deallocate
+size_type _M_len;
+_Tp_alloc_type& _M_alloc;
+
+_GLIBCXX20_CONSTEXPR
+_Guard(pointer __s, size_type __l, _Tp_alloc_type& __a)
+: _M_storage(__s), _M_len(__l), _M_alloc(__a)
+{ }
+
+_GLIBCXX20_CONSTEXPR
+~_Guard()
+{
+  if (_M_storage)
+    __gnu_cxx::__alloc_traits<_Tp_alloc_type>::
+      deallocate(_M_alloc, _M_storage, _M_len);
+}
+
+    private:
+_Guard(const _Guard&);
+    };
+
+    {
+_Guard __guard(__new_start, __len, _M_impl);
+
+std::__uninitialized_default_n_a(__new_start + __size, __n,
+          _M_get_Tp_allocator());
+
+if _GLIBCXX17_CONSTEXPR (_S_use_relocate())
+  {
+    _S_relocate(__old_start, __old_finish,
+    __new_start, _M_get_Tp_allocator());
+  }
+else
+  {
+    // RAII type to destroy initialized elements.
+    struct _Guard_elts
+    {
+      pointer _M_first, _M_last;  // Elements to destroy
+      _Tp_alloc_type& _M_alloc;
+
+      _GLIBCXX20_CONSTEXPR
+      _Guard_elts(pointer __first, size_type __n,
+      _Tp_alloc_type& __a)
+      : _M_first(__first), _M_last(__first + __n), _M_alloc(__a)
+      { }
+
+      _GLIBCXX20_CONSTEXPR
+      ~_Guard_elts()
+      { std::_Destroy(_M_first, _M_last, _M_alloc); }
+
+    private:
+      _Guard_elts(const _Guard_elts&);
+    };
+    _Guard_elts __guard_elts(__new_start + __size, __n, _M_impl);
+
+    std::__uninitialized_move_if_noexcept_a(
+      __old_start, __old_finish, __new_start,
+      _M_get_Tp_allocator());
+
+    __guard_elts._M_first = __old_start;
+    __guard_elts._M_last = __old_finish;
+  }
+_GLIBCXX_ASAN_ANNOTATE_REINIT;
+__guard._M_storage = __old_start;
+__guard._M_len = this->_M_impl._M_end_of_storage - __old_start;
+    }
+    // deallocate should be called before assignments to _M_impl,
+    // to avoid call-clobbering
+
+    this->_M_impl._M_start = __new_start;
+    this->_M_impl._M_finish = __new_start + __size + __n;
+    this->_M_impl._M_end_of_storage = __new_start + __len;
+  }
+}
+}
+
+현재 끝에 __n개 원소를 ‘디폴트 생성(default-insert)’로 덧붙인다”는 일을 합니다. 용량이 남으면 그 자리에서 만들고, 
+모자라면 더 큰 버퍼를 새로 잡아 (재)배치/이동한 뒤 붙입니다. 강한 예외 보장까지 챙겨 둔 코드예요.
+어떻게 동작하나 (흐름)
+사전 계산 & 불변식 점검
+__size = size(), __navail = end_of_storage - finish (남은 슬롯 수).
+오버플로우/이상 상태를 _GLIBCXX 단언으로 막고 __builtin_unreachable()로 컴파일러 힌트.
+용량이 충분한 경우 (__navail >= __n)
+std::__uninitialized_default_n_a(finish, __n, alloc) 호출로, 초기화되지 않은 메모리 구간에 __n개를 ‘디폴트 생성’ 합니다.
+클래스 타입이면 기본 생성자를 호출.
+**트리비얼 타입(int 등)**이면 아무 것도 안 하고 메모리를 둔 채로 둡니다(값은 미정). 이런 경로는 바로 이어서 값을 써 넣는 상황에서만 사용되도록 내부에서 관리됩니다.
+finish 포인터를 새 끝으로 갱신.
+용량이 부족한 경우
+기존 포인터들을 지역 변수(__old_start, __old_finish)에 백업.
+새 용량 __len = _M_check_len(__n, "vector::_M_default_append") 계산
+(보통 현재 크기의 2배 vs size+__n 중 큰 쪽을 택하고 max_size()로 상한).
+__new_start = _M_allocate(__len)로 새 버퍼 할당.
+RAII **가드 _Guard**를 세워 예외 시 새 버퍼 자동 해제.
+먼저, 새 버퍼의 (옮겨질 기존 원소 뒤쪽) 붙일 구간에
+std::__uninitialized_default_n_a(__new_start + __size, __n, alloc)로 디폴트 생성을 해 둡니다.
+→ 이후 이동/복사 중 예외가 나면 이 부분을 안전하게 지울 수 있게 하기 위함.
+그런 다음, 두 가지 경로 중 하나:
+if constexpr (_S_use_relocate())
+가능한 타입이라면(트리비얼 이동/소멸 등) relocate 최적화로 기존 원소를 빠르게 재배치(memcpy 류).
+그 외
+보수적으로 std::__uninitialized_move_if_noexcept_a로 새 버퍼로 이동(또는 예외 안전을 위해 복사).
+이때 또 다른 RAII 가드 **_Guard_elts**로 어떤 구간을 파괴할지를 상황에 따라 바꿉니다.
+처음엔 “막 디폴트 생성해 둔 __n개”를 파괴 대상으로 두었다가, 기존 원소의 이동이 성공하면 파괴 대상을 “원래 버퍼의 원소들”로 바꿉니다.
+→ 블록을 빠져나갈 때 자동으로 원래 버퍼의 원소를 파괴하게 되어 강한 예외 보장을 달성.
+ASan 주석(_GLIBCXX_ASAN_ANNOTATE_REINIT)으로 재초기화 영역을 표시.
+스토리지 가드 _Guard의 대상 포인터를 새 버퍼 → 오래된 버퍼로 스위치.
+→ 이제 블록을 빠져나갈 때 오래된 버퍼를 deallocate 하게 됨.
+중요: 주석 그대로 “deallocate는 _M_impl 갱신 전에” 일어나도록 스코프를 끊어 가드가 먼저 소멸되게 합니다.
+마지막으로 _M_impl의 세 포인터를 새 버퍼 기준으로 갱신:
+_M_start = __new_start
+_M_finish = __new_start + __size + __n
+_M_end_of_storage = __new_start + __len
+
+디폴트 생성된’ 원소를 __n개. (값을 채워넣는 fill과, 0으로 채우는 value-initialize와는 구분됩니다. 이 함수는 의도적으로 default-initialize를 사용.)
+
+트리비얼 타입에선 왜 ‘그냥 두나’?
+트리비얼 기본생성은 실질 작업이 없으므로 메모리 값을 건드리지 않습니다. 
+이 경로는 곧바로 값을 써 넣는 상위 연산과 함께만 쓰이도록(예: insert 과정 중 “자리를 먼저 늘려두고 값 복사”) 내부에서 사용됩니다.
+예외 안전성
+이중 RAII 가드로 강한 예외 보장(strong guarantee):
+중간에 어떤 예외가 나도 원래 vector는 그대로이고, 누수/미파괴 없음.
+성능 최적화
+용량 충분 시: 새로 추가되는 부분만 생성 → O(__n)
+용량 부족 시: 새 버퍼 할당 + (재)배치/이동 → O(size + __n)
+타입이 허용하면 **relocate(사실상 memcpy)**를 써서 매우 빠름.
+
+/*
+  Clear
+*/
+
+/**
+ *  Erases all the elements.  Note that this function only erases the
+ *  elements, and that if the elements themselves are pointers, the
+ *  pointed-to memory is not touched in any way.  Managing the pointer is
+ *  the user's responsibility.
+ */
+_GLIBCXX20_CONSTEXPR
+void
+clear() _GLIBCXX_NOEXCEPT
+{ _M_erase_at_end(this->_M_impl._M_start); }
+
+
+/*
+  Erase At end
+*/
+
+// Internal erase functions follow.
+
+// Called by erase(q1,q2), clear(), resize(), _M_fill_assign,
+// _M_assign_aux.
+_GLIBCXX20_CONSTEXPR
+void
+_M_erase_at_end(pointer __pos) _GLIBCXX_NOEXCEPT
+{
+if (size_type __n = this->_M_impl._M_finish - __pos)
+{
+std::_Destroy(__pos, this->_M_impl._M_finish,
+  _M_get_Tp_allocator());
+this->_M_impl._M_finish = __pos;
+_GLIBCXX_ASAN_ANNOTATE_SHRINK(__n);
+}
+}
+
+/*
+  Erase
+*/
+
+/**
+ *  @brief  Remove element at given position.
+ *  @param  __position  Iterator pointing to element to be erased.
+ *  @return  An iterator pointing to the next element (or end()).
+ *
+ *  This function will erase the element at the given position and thus
+ *  shorten the %vector by one.
+ *
+ *  Note This operation could be expensive and if it is
+ *  frequently used the user should consider using std::list.
+ *  The user is also cautioned that this function only erases
+ *  the element, and that if the element is itself a pointer,
+ *  the pointed-to memory is not touched in any way.  Managing
+ *  the pointer is the user's responsibility.
+ */
+_GLIBCXX20_CONSTEXPR
+iterator
+#if __cplusplus >= 201103L
+erase(const_iterator __position)
+{ return _M_erase(begin() + (__position - cbegin())); }
+
+/**
+ *  @brief  Remove a range of elements.
+ *  @param  __first  Iterator pointing to the first element to be erased.
+ *  @param  __last  Iterator pointing to one past the last element to be
+ *                  erased.
+ *  @return  An iterator pointing to the element pointed to by @a __last
+ *           prior to erasing (or end()).
+ *
+ *  This function will erase the elements in the range
+ *  [__first,__last) and shorten the %vector accordingly.
+ *
+ *  Note This operation could be expensive and if it is
+ *  frequently used the user should consider using std::list.
+ *  The user is also cautioned that this function only erases
+ *  the elements, and that if the elements themselves are
+ *  pointers, the pointed-to memory is not touched in any way.
+ *  Managing the pointer is the user's responsibility.
+ */
+_GLIBCXX20_CONSTEXPR
+iterator
+#if __cplusplus >= 201103L
+erase(const_iterator __first, const_iterator __last)
+{
+const auto __beg = begin();
+const auto __cbeg = cbegin();
+return _M_erase(__beg + (__first - __cbeg), __beg + (__last - __cbeg));
+}
+
+// M erase, position +1 ~ end 를 한칸땡기고 마지막거 지움
+template<typename _Tp, typename _Alloc>
+_GLIBCXX20_CONSTEXPR
+typename vector<_Tp, _Alloc>::iterator
+vector<_Tp, _Alloc>::
+_M_erase(iterator __position)
+{
+  if (__position + 1 != end())
+_GLIBCXX_MOVE3(__position + 1, end(), __position);
+  --this->_M_impl._M_finish;
+  _Alloc_traits::destroy(this->_M_impl, this->_M_impl._M_finish);
+  _GLIBCXX_ASAN_ANNOTATE_SHRINK(1);
+  return __position;
+}
+
+
+/*
+  Insert
+*/
+
+template<typename _Tp, typename _Alloc>
+_GLIBCXX20_CONSTEXPR
+typename vector<_Tp, _Alloc>::iterator
+vector<_Tp, _Alloc>::
+#if __cplusplus >= 201103L
+insert(const_iterator __position, const value_type& __x)
+#else
+insert(iterator __position, const value_type& __x)
+#endif
+{
+  const size_type __n = __position - begin();
+  if (this->_M_impl._M_finish != this->_M_impl._M_end_of_storage)
+{
+__glibcxx_assert(__position != const_iterator());
+if (!(__position != const_iterator()))
+  __builtin_unreachable(); // PR 106434
+
+if (__position == end())
+  {
+    _GLIBCXX_ASAN_ANNOTATE_GROW(1);
+    _Alloc_traits::construct(this->_M_impl, this->_M_impl._M_finish,
+            __x);
+    ++this->_M_impl._M_finish;
+    _GLIBCXX_ASAN_ANNOTATE_GREW(1);
+  }
+else
+  {
+#if __cplusplus >= 201103L
+    const auto __pos = begin() + (__position - cbegin());
+    // __x could be an existing element of this vector, so make a
+    // copy of it before _M_insert_aux moves elements around.
+    _Temporary_value __x_copy(this, __x);
+    _M_insert_aux(__pos, std::move(__x_copy._M_val()));
+#else
+    _M_insert_aux(__position, __x);
+#endif
+  }
+}
+  else
+#if __cplusplus >= 201103L
+_M_realloc_insert(begin() + (__position - cbegin()), __x);
+#else
+_M_realloc_insert(__position, __x);
+#endif
+
+  return iterator(this->_M_impl._M_start + __n);
+}
+
+/**
+ *  @brief  Inserts given rvalue into %vector before specified iterator.
+ *  @param  __position  A const_iterator into the %vector.
+ *  @param  __x  Data to be inserted.
+ *  @return  An iterator that points to the inserted data.
+ *
+ *  This function will insert a copy of the given rvalue before
+ *  the specified location.  Note that this kind of operation
+ *  could be expensive for a %vector and if it is frequently
+ *  used the user should consider using std::list.
+ */
+_GLIBCXX20_CONSTEXPR
+iterator
+insert(const_iterator __position, value_type&& __x)
+{ return _M_insert_rval(__position, std::move(__x)); }
+
+/**
+ *  @brief  Inserts an initializer_list into the %vector.
+ *  @param  __position  An iterator into the %vector.
+ *  @param  __l  An initializer_list.
+ *
+ *  This function will insert copies of the data in the
+ *  initializer_list @a l into the %vector before the location
+ *  specified by @a position.
+ *
+ *  Note that this kind of operation could be expensive for a
+ *  %vector and if it is frequently used the user should
+ *  consider using std::list.
+ */
+_GLIBCXX20_CONSTEXPR
+iterator
+insert(const_iterator __position, initializer_list<value_type> __l)
+{
+auto __offset = __position - cbegin();
+_M_range_insert(begin() + __offset, __l.begin(), __l.end(),
+std::random_access_iterator_tag());
+return begin() + __offset;
+}
+
+/**
+ *  @brief  Inserts a number of copies of given data into the %vector.
+ *  @param  __position  A const_iterator into the %vector.
+ *  @param  __n  Number of elements to be inserted.
+ *  @param  __x  Data to be inserted.
+ *  @return  An iterator that points to the inserted data.
+ *
+ *  This function will insert a specified number of copies of
+ *  the given data before the location specified by @a position.
+ *
+ *  Note that this kind of operation could be expensive for a
+ *  %vector and if it is frequently used the user should
+ *  consider using std::list.
+ */
+_GLIBCXX20_CONSTEXPR
+iterator
+insert(const_iterator __position, size_type __n, const value_type& __x)
+{
+difference_type __offset = __position - cbegin();
+_M_fill_insert(begin() + __offset, __n, __x);
+return begin() + __offset;
+}
+
+/*
+  M insert rval
+*/
+template<typename _Tp, typename _Alloc>
+  _GLIBCXX20_CONSTEXPR
+  auto
+  vector<_Tp, _Alloc>::
+  _M_insert_rval(const_iterator __position, value_type&& __v) -> iterator
+  {
+    const auto __n = __position - cbegin();
+    if (this->_M_impl._M_finish != this->_M_impl._M_end_of_storage)
+if (__position == cend())
+  {
+    _GLIBCXX_ASAN_ANNOTATE_GROW(1);
+    _Alloc_traits::construct(this->_M_impl, this->_M_impl._M_finish,
+            std::move(__v));
+    ++this->_M_impl._M_finish;
+    _GLIBCXX_ASAN_ANNOTATE_GREW(1);
+  }
+else
+  _M_insert_aux(begin() + __n, std::move(__v));
+    else
+_M_realloc_insert(begin() + __n, std::move(__v));
+
+    return iterator(this->_M_impl._M_start + __n);
+  }
+
+
+/*
+  Pop Back
+
+*/
+
+/**
+ *  @brief  Removes last element.
+ *
+ *  This is a typical stack operation. It shrinks the %vector by one.
+ *
+ *  Note that no data is returned, and if the last element's
+ *  data is needed, it should be retrieved before pop_back() is
+ *  called.
+ */
+_GLIBCXX20_CONSTEXPR
+void
+pop_back() _GLIBCXX_NOEXCEPT
+{
+__glibcxx_requires_nonempty();
+--this->_M_impl._M_finish;
+_Alloc_traits::destroy(this->_M_impl, this->_M_impl._M_finish);
+_GLIBCXX_ASAN_ANNOTATE_SHRINK(1);
+}
+
+/*
+  Data()
+*/
+
+// _GLIBCXX_RESOLVE_LIB_DEFECTS
+// DR 464. Suggestion for new member functions in standard containers.
+// data access
+/**
+ *   Returns a pointer such that [data(), data() + size()) is a valid
+ *   range.  For a non-empty %vector, data() == &front().
+ * 
+std::vector::data()는 벡터의 내부 연속 메모리 블록을 가리키는 생 포인터를 돌려주는 접근자
+
+빈 벡터면 data()는 역참조하면 안 됨(대개 nullptr).
+&v[0]는 빈 벡터에서 UB이므로, 항상 data()를 쓰는 게 안전.
+
+포인터 무효화: 용량이 커지는 연산(push_back, emplace_back, insert, resize로 늘림, reserve로 확장 등)이 일어나면 이전 data() 포인터는 모두 무효.
+
+오래 들고 써야 하면 먼저 충분히 reserve(N) 해서 재할당을 피하세요.
+
+비trivial 타입에는 memcpy/memset 같은 바이트 함수 금지(UB). 그땐 정상적인 복사/이동/대입을 써야 함.
+
+정렬/별칭: reinterpret_cast<std::byte*> / unsigned char*로 바이트 보기는 허용되지만, 다른 타입으로의 무단 별칭은 주의.
+
+요약: data()는 “벡터의 연속 버퍼 시작 주소”를 주는 표준 창구
+
+data()는 *생 포인터(T)**를 주고, begin()은 이터레이터를 줍니다. std::vector에선 둘 다 첫 원소를 가리키지만 타입·용도·디버그/호환성이 달라요
+
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+_Tp*
+data() _GLIBCXX_NOEXCEPT
+{ return _M_data_ptr(this->_M_impl._M_start); }
+
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+const _Tp*
+data() const _GLIBCXX_NOEXCEPT
+{ return _M_data_ptr(this->_M_impl._M_start); }
+
+
+/*
+  Begin End
+*/
+
+// iterators
+/**
+ *  Returns a read/write iterator that points to the first
+ *  element in the %vector.  Iteration is done in ordinary
+ *  element order.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+iterator
+begin() _GLIBCXX_NOEXCEPT
+{ return iterator(this->_M_impl._M_start); }
+
+/**
+ *  Returns a read-only (constant) iterator that points to the
+ *  first element in the %vector.  Iteration is done in ordinary
+ *  element order.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+const_iterator
+begin() const _GLIBCXX_NOEXCEPT
+{ return const_iterator(this->_M_impl._M_start); }
+
+/**
+ *  Returns a read/write iterator that points one past the last
+ *  element in the %vector.  Iteration is done in ordinary
+ *  element order.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+iterator
+end() _GLIBCXX_NOEXCEPT
+{ return iterator(this->_M_impl._M_finish); }
+
+/**
+ *  Returns a read-only (constant) iterator that points one past
+ *  the last element in the %vector.  Iteration is done in
+ *  ordinary element order.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+const_iterator
+end() const _GLIBCXX_NOEXCEPT
+{ return const_iterator(this->_M_impl._M_finish); }
+
+/**
+ *  Returns a read/write reverse iterator that points to the
+ *  last element in the %vector.  Iteration is done in reverse
+ *  element order.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+reverse_iterator
+rbegin() _GLIBCXX_NOEXCEPT
+{ return reverse_iterator(end()); }
+
+/**
+ *  Returns a read-only (constant) reverse iterator that points
+ *  to the last element in the %vector.  Iteration is done in
+ *  reverse element order.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+const_reverse_iterator
+rbegin() const _GLIBCXX_NOEXCEPT
+{ return const_reverse_iterator(end()); }
+
+/**
+ *  Returns a read/write reverse iterator that points to one
+ *  before the first element in the %vector.  Iteration is done
+ *  in reverse element order.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+reverse_iterator
+rend() _GLIBCXX_NOEXCEPT
+{ return reverse_iterator(begin()); }
+
+/**
+ *  Returns a read-only (constant) reverse iterator that points
+ *  to one before the first element in the %vector.  Iteration
+ *  is done in reverse element order.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+const_reverse_iterator
+rend() const _GLIBCXX_NOEXCEPT
+{ return const_reverse_iterator(begin()); }
+
+#if __cplusplus >= 201103L
+/**
+ *  Returns a read-only (constant) iterator that points to the
+ *  first element in the %vector.  Iteration is done in ordinary
+ *  element order.
+ */
+[[__nodiscard__]] _GLIBCXX20_CONSTEXPR
+const_iterator
+cbegin() const noexcept
+{ return const_iterator(this->_M_impl._M_start); }
+
+/**
+ *  Returns a read-only (constant) iterator that points one past
+ *  the last element in the %vector.  Iteration is done in
+ *  ordinary element order.
+ */
+[[__nodiscard__]] _GLIBCXX20_CONSTEXPR
+const_iterator
+cend() const noexcept
+{ return const_iterator(this->_M_impl._M_finish); }
+
+/**
+ *  Returns a read-only (constant) reverse iterator that points
+ *  to the last element in the %vector.  Iteration is done in
+ *  reverse element order.
+ */
+[[__nodiscard__]] _GLIBCXX20_CONSTEXPR
+const_reverse_iterator
+crbegin() const noexcept
+{ return const_reverse_iterator(end()); }
+
+/**
+ *  Returns a read-only (constant) reverse iterator that points
+ *  to one before the first element in the %vector.  Iteration
+ *  is done in reverse element order.
+ */
+[[__nodiscard__]] _GLIBCXX20_CONSTEXPR
+const_reverse_iterator
+crend() const noexcept
+{ return const_reverse_iterator(begin()); }
+
+
+/*
+  Front Back At
+*/
+
+/**
+ *  @brief  Provides access to the data contained in the %vector.
+ *  @param __n The index of the element for which data should be
+ *  accessed.
+ *  @return  Read/write reference to data.
+ *  @throw  std::out_of_range  If @a __n is an invalid index.
+ *
+ *  This function provides for safer data access.  The parameter
+ *  is first checked that it is in the range of the vector.  The
+ *  function throws out_of_range if the check fails.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+reference
+at(size_type __n)
+{
+_M_range_check(__n);
+return (*this)[__n];
+}
+
+/**
+ *  @brief  Provides access to the data contained in the %vector.
+ *  @param __n The index of the element for which data should be
+ *  accessed.
+ *  @return  Read-only (constant) reference to data.
+ *  @throw  std::out_of_range  If @a __n is an invalid index.
+ *
+ *  This function provides for safer data access.  The parameter
+ *  is first checked that it is in the range of the vector.  The
+ *  function throws out_of_range if the check fails.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+const_reference
+at(size_type __n) const
+{
+_M_range_check(__n);
+return (*this)[__n];
+}
+
+/**
+ *  Returns a read/write reference to the data at the first
+ *  element of the %vector.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+reference
+front() _GLIBCXX_NOEXCEPT
+{
+__glibcxx_requires_nonempty();
+return *begin();
+}
+
+/**
+ *  Returns a read-only (constant) reference to the data at the first
+ *  element of the %vector.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+const_reference
+front() const _GLIBCXX_NOEXCEPT
+{
+__glibcxx_requires_nonempty();
+return *begin();
+}
+
+/**
+ *  Returns a read/write reference to the data at the last
+ *  element of the %vector.
+ */
+_GLIBCXX_NODISCARD _GLIBCXX20_CONSTEXPR
+reference
+back() _GLIBCXX_NOEXCEPT
+{
+__glibcxx_requires_nonempty();
+return *(end() - 1);
+}

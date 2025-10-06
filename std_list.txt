@@ -1,0 +1,223 @@
+/**
+   *  @brief A standard container with linear time access to elements,
+   *  and fixed time insertion/deletion at any point in the sequence.
+   *
+   *  @ingroup sequences
+   *
+   *  @tparam _Tp  Type of element.
+   *  @tparam _Alloc  Allocator type, defaults to allocator<_Tp>.
+   *
+   *  Meets the requirements of a <a href="tables.html#65">container</a>, a
+   *  <a href="tables.html#66">reversible container</a>, and a
+   *  <a href="tables.html#67">sequence</a>, including the
+   *  <a href="tables.html#68">optional sequence requirements</a> with the
+   *  %exception of @c at and @c operator[].
+   *
+   *  This is a @e doubly @e linked %list.  Traversal up and down the
+   *  %list requires linear time, but adding and removing elements (or
+   *  @e nodes) is done in constant time, regardless of where the
+   *  change takes place.  Unlike std::vector and std::deque,
+   *  random-access iterators are not provided, so subscripting ( @c
+   *  [] ) access is not allowed.  For algorithms which only need
+   *  sequential access, this lack makes no difference.
+   *
+   *  Also unlike the other standard containers, std::list provides
+   *  specialized algorithms %unique to linked lists, such as
+   *  splicing, sorting, and in-place reversal.
+   *
+   *  A couple points on memory allocation for list<Tp>:
+   *
+   *  First, we never actually allocate a Tp, we allocate
+   *  List_node<Tp>'s and trust [20.1.5]/4 to DTRT.  This is to ensure
+   *  that after elements from %list<X,Alloc1> are spliced into
+   *  %list<X,Alloc2>, destroying the memory of the second %list is a
+   *  valid operation, i.e., Alloc1 giveth and Alloc2 taketh away.
+   *
+   *  Second, a %list conceptually represented as
+   *  @code
+   *    A <---> B <---> C <---> D
+   *  @endcode
+   *  is actually circular; a link exists between A and D.  The %list
+   *  class holds (as its only data member) a private list::iterator
+   *  pointing to @e D, not to @e A!  To get to the head of the %list,
+   *  we start at the tail and move forward by one.  When this member
+   *  iterator's next/previous pointers refer to itself, the %list is
+   *  %empty.
+   * 
+컨테이너 성격: std::list는 이중 연결 리스트. 원소 접근은 선형 시간(O(n)), 어느 위치든 삽입/삭제는 상수 시간(O(1)).
+
+임의 접근 없음: 랜덤 액세스 이터레이터가 없어서 operator[], at() 제공 안 함. 알고리즘은 순차 접근 전제.
+
+요구사항 충족: 표준의 container / reversible container / sequence 요구사항(선택적 시퀀스 요구 포함) 충족.
+
+전용 알고리즘: 연결 리스트 특화 기능 제공 — splice(스플라이스), sort(제자리 정렬), reverse(제자리 반전).
+
+메모리/할당자 포인트: 실제로 Tp 자체가 아니라 List_node<Tp> 노드를 할당.
+다른 할당자를 쓰는 리스트 간 splice 후에도 각 리스트가 자기 방식대로 파괴/해제 가능(할당자 규약에 부합).
+
+원형(sentinel) 구조: 내부적으로 원형 리스트(센티널 노드). 클래스는 꼬리(센티널) 위치를 가리키는 이터레이터 하나만 보관하고, 
+머리는 그 다음 노드. 센티널의 next/prev가 자기 자신이면 빈 리스트.
+
+템플릿 인자: std::list<T, Alloc>에서 Alloc은 할당자 타입, 기본은 std::allocator<T>
+
+네, “꼬리(tail) 위치의 센티널 노드를 가리키는 이터레이터(end())를 내부에 들고 있다”**는 뜻이야.
+실제 데이터 원소 D 자체를 가리키는 게 아니라, **마지막과 처음 사이에 끼어 있는 숨은 노드(센티널)**를 가리킨다고 보면 정확해.
+구조 요약 (libstdc++의 std::list)
+내부에 원형 이중연결 리스트 + 센티널 노드 하나를 둠.
+리스트가 비어 있으면: sentinel->next == sentinel 그리고 sentinel->prev == sentinel.
+공개 API 관점:
+end() → 센티널을 가리키는 이터레이터
+begin() → std::next(end()) (센티널의 다음 = 첫 원소)
+마지막 원소 이터레이터 → std::prev(end())
+front() = *begin(), back() = *std::prev(end())
+즉, 주석의 “D”는 리스트의 꼬리 위치에 있는 센티널을 뜻한다고 이해하면 돼.
+그래서 “머리(A)로 가려면 꼬리(D)에서 한 칸 앞으로 가라” → begin() = ++end()가 되는 것
+
+
+
+
+
+
+좋아, std::list 전용 3개 연산을 무엇을 하는지 + 시간복잡도만 딱 잡아줄게.
+
+splice (스플라이스)
+
+무엇: 다른 리스트(또는 같은 리스트)의 노드들을 복사 없이 링크만 갈아끼워 현재 리스트의 pos 앞에 붙임. 원소 생성/소멸 없음 → 빠름.
+
+복잡도:
+
+전체 이동 splice(pos, other) → O(1). 
+en.cppreference.com
+
+단일 노드 splice(pos, other, it) → O(1). 
+en.cppreference.com
+
+구간 이동 splice(pos, other, first, last) →
+
+같은 리스트에서의 재배치면 O(1),
+
+다른 리스트에서 가져오면 O(k) (k = distance(first,last)) — 보통 크기 갱신 때문에 개수 세야 해서. 
+en.cppreference.com
+
+주의: 두 리스트의 할당자 비교가 같지 않으면 UB(표준 요구). 이때는 스플라이스 못 한다고 보면 됨. 
+en.cppreference.com
+
+sort (제자리 정렬)
+
+무엇: 리스트 자체를 안정 정렬(stable) 함. std::sort는 랜덤액세스 이터레이터가 필요해서 리스트엔 못 씀 → list::sort를 써야 함. 
+en.cppreference.com
+
+복잡도: 약 O(N log N) 비교 (비교자 쓰면 그 호출도 O(N log N)). 이터레이터/참조 무효화 안 됨. 
+en.cppreference.com
+
+reverse (제자리 반전)
+
+무엇: 리스트의 순서를 뒤집음. 링크를 전부 뒤집어야 하므로 각 노드를 한 번씩 만짐.
+
+복잡도: O(N), 이터레이터/참조 무효화 안 됨. 
+cppreference.patrickfasano.com
++1
+
+작게 예시:
+
+std::list<int> a = {1,2,3}, b = {10,20,30};
+
+// splice
+auto pos = std::next(a.begin());     // 2 앞에
+a.splice(pos, b);                    // b의 모든 노드를 a로 (O(1))
+
+// sort
+a.sort();                            // 안정 정렬, O(N log N)
+
+// reverse
+a.reverse();
+
+
+
+액세스/반복자
+front() / back() : 첫/마지막 원소 참조. O(1)
+begin() / end() : 앞/끝(센티널) 이터레이터. O(1)
+용량
+empty() : 비었는지. O(1)
+size() : 원소 수. 보통 O(1)(현대 구현)
+수정(삽입/삭제/생성)
+push_front(x) / push_back(x) : 앞/뒤에 삽입. O(1)
+emplace_front(args...) / emplace_back(args...) / emplace(pos, args...) : 자리에서 생성. O(1)(pos까지 가는 비용 제외)
+insert(pos, x) : pos 앞에 삽입. O(1)(pos까지 가는 비용 제외)
+pop_front() / pop_back() : 앞/뒤 하나 삭제. O(1)
+erase(it) : it 가리키는 원소 삭제. O(1)
+erase(first,last) : 구간 삭제. O(distance(first,last))
+clear() : 전부 삭제. O(n)
+assign(count, x) / assign(first,last) : 새 내용으로 교체. O(n)
+리스트 전용 연산
+splice(pos, other) / splice(pos, other, it) / splice(pos, other, first, last)
+: 노드 링크만 갈아끼워 다른 리스트(또는 자기 자신) 구간을 옮김(복사/이동 생성 없음).
+O(1)(전체/단일 노드). 구간은 O(k)(k개 노드 이동).
+⚠️ 동일 타입 + 같은 allocator(또는 같은 PMR resource) 가 아니면 UB.
+remove(value) / remove_if(pred) : 값/조건에 맞는 원소 모두 삭제. O(n)
+unique() : 연속된 중복 원소 제거(인접한 것만). O(n)
+merge(other) : 정렬된 두 리스트를 안정 병합하여 자기 리스트에 연결. O(n)
+⚠️ 두 리스트가 같은 비교 기준으로 정렬되어 있어야 함.
+sort() : 리스트 자체 안정 정렬. O(n log n)
+reverse() : 순서 뒤집기(링크만 반전). O(n)
+swap(other) : 두 리스트 교환. O(1)
+이터레이터/참조 무효화 규칙 (중요)
+삭제된 원소의 이터레이터/참조만 무효화됨.
+insert/emplace/push/splice/merge/sort/reverse 후에도 다른 원소들의 이터레이터/참조는 유효(순서만 바뀔 수 있음).
+splice/merge로 다른 리스트로 옮겨진 노드의 이터레이터는 여전히 유효하지만, 소속 컨테이너가 바뀜.
+
+
+한 번 찾아놓으면” 그 뒤의 조작이 매우 싸다(O(1))**는 게 핵심
+
+
+언제 std::list가 이득인가 (실전 예시)
+LRU 캐시 (대표 예시)
+키→노드 이터레이터를 unordered_map에 저장.
+히트 시 그 노드를 splice로 맨 앞에 O(1) 이동.
+축출 시 맨 뒤 pop_back O(1).
+스케줄러 / 타임휠 / 작업 큐
+작업 제출 시 리스트에 노드 추가하고, 그 이터레이터를 핸들로 보관.
+취소/우선순위 변경 시 해당 이터레이터로 erase/splice → O(1).
+벡터는 중간 지우기/이동이 O(n)이고 iterator도 자주 무효화됨.
+“연결”만 갈아끼우는 병합/이동
+이미 정렬된 두 리스트를 merge(안정) O(n) 로 연결(대형 객체 복사 없음).
+여러 큐 사이에서 덩어리(구간)를 **splice(pos, other, first, last) O(k)**로 이동(복사/이동 생성 없음).
+원소 주소(참조) 안정성 필요
+vector는 재할당/중간 삽입에 기존 참조·포인터가 깨짐.
+list는 지운 노드만 무효화되고, 나머지 참조/포인터/이터레이터는 평생 유효(순서만 변할 수 있음).
+엔진/그래프 구조에서 여러 곳이 같은 객체 주소를 쥐고 있는 상황에 유리.
+예: Scene이 Entity를 리스트에 두고, 여러 시스템이 포인터로 참조.
+큰/이동 비용 큰 타입, 비이동 타입
+list는 재배치 시 값 자체를 옮기지 않고 링크만 수정 → 대형/복잡 객체에 유리.
+“복사/이동 불가” 객체도 emplace_*로 자리에 생성해두면 이후 재배치는 splice로 O(1).
+자주 앞/중간에 삽입/삭제
+위치만 알아내면 삽입/삭제 O(1). (탐색 비용은 별도)
+패턴이 “순회하면서 조건 맞는 곳에서 바로 지움/옮김”일 때 강력.
+(예: 필터링하면서 remove_if/splice)
+간단 연결 자료구조/프리리스트
+프리블록 목록, 이벤트 체인, undo/redo 같은 데서
+노드 제거/삽입이 O(1)이고 구현이 직관적.
+제자리 알고리즘 제공
+reverse() O(n) — 값 이동 없이 링크만 반전.
+sort() O(n log n) — 안정 정렬, 값 이동 없이 링크 재조합.
+unique() — 인접 중복 제거 O(n) (링크 수정만).
+
+짚고 가자:
+탐색과 **조회(역참조)**는 다릅니다.
+탐색(find/인덱스 i까지 걷기) → 노드를 타고 가야 하므로 O(n)
+조회(이미 가진 이터레이터 it로 *it 읽기) → 그 노드를 직접 가리키고 있어 O(1)
+왜 O(1)인가?
+이터레이터의 원리(핵심)
+std::list의 이터레이터는 사실상 “노드 포인터”의 얇은 래퍼
+
+언제 O(n)이 되나?
+그 노드의 이터레이터가 없을 때 (인덱스로 접근, 값으로 검색 등):
+begin()에서부터 걸어가야 하므로 O(n).
+그래서 실무에선 키 → 이터레이터를 unordered_map에 저장해
+찾기 O(1) + 조작 O(1) 패턴(LRU 등)을 씁니다.
+유효성(중요 포인트)
+std::list는 지운 노드의 이터레이터만 무효화됩니다.
+insert/splice/reverse/sort/merge 등으로 순서가 바뀌어도 그 노드 이터레이터는 여전히 유효(단, 소속 컨테이너가 바뀔 수 있음).
+지운 노드를 가리키는 이터레이터를 쓰면 UB입니다.
+요약: 이터레이터는 그 노드의 주소를 들고 있으니, 찾는 과정만 빼면 **조회/삽입/삭제가 전부 O(1)**입니다. 탐색이 필요할 때만 O(n)
+  */

@@ -1,3 +1,75 @@
+간단히: **Allocator는 컨테이너가 쓸 “메모리 관리자 플러그인”**이에요.
+std::vector, std::list 같은 컨테이너가 내부에서 new/delete를 직접 쓰지 않고, **할당자(allocator)**를 통해 메모리를 할당/해제 + (필요하면) 객체 생성/파괴를 합니다.
+
+무엇을 하나?
+
+raw 메모리 할당/해제
+
+p = alloc.allocate(n); → T를 n개 담을 초기화되지 않은 메모리 블록을, 적절한 정렬(alignment)로 확보
+
+alloc.deallocate(p, n); → 위에서 받은 블록을 해제
+※ 여기서는 객체 생성/소멸은 하지 않음(메모리만 잡고/반환)
+
+객체 생성/파괴(allocator_traits 경유)
+
+std::allocator_traits<Alloc>::construct(alloc, p, args...)
+
+std::allocator_traits<Alloc>::destroy(alloc, p)
+컨테이너는 보통 uninitialized_* 알고리즘과 함께 이걸 써서, *초기화되지 않은 메모리 위에 객체를 “제자리에” 만들고/지웁니다.
+
+정책 주입
+
+풀/아레나, 디버그 로깅, 특정 정렬 요구, 공유 메모리/NUMA 등 메모리 정책을 바꿀 수 있어요.
+
+복사/이동/스왑 시 할당자 전달 규칙(propagate_on_container_*) 같은 메타 정책도 가질 수 있습니다.
+
+왜 필요한가?
+
+컨테이너 코드에서 메모리 관리를 추상화해 표준화된 성능/동작을 보장.
+
+특수 환경(게임/임베디드/서버)에서 할당 비용 최적화, 파편화 완화, 추적/로깅 등을 하려면 커스텀 할당자나 PMR이 유용.
+
+std::list<int, ?>의 ?에는 할당자 타입(Allocator) 이 들어갑니다.
+기본은 std::allocator<int>라서 보통 생략해요.
+
+형태
+template<class T, class Allocator = std::allocator<T>>
+class std::list;
+
+예시
+std::list<int> a;                                  // = std::list<int, std::allocator<int>>
+
+// 커스텀 할당자 사용
+template<class T> struct LoggingAlloc { /* allocate/deallocate 구현 */ };
+std::list<int, LoggingAlloc<int>> b;
+
+// PMR(폴리모픽 할당자, C++17+)
+#include <memory_resource>
+std::pmr::list<int> c;  // = std::list<int, std::pmr::polymorphic_allocator<int>>
+
+왜/언제 쓰나
+
+std::list는 노드 기반 컨테이너라 원소마다 동적할당을 자주 합니다.
+→ 풀/아레나 할당자, 메모리 추적용 할당자, **특수 정렬(align)**이 필요할 때 유용.
+
+주의점
+
+스플라이스(splice) 같은 리스트 간 노드 이동은 할당자 타입이 같고(보통은 비교도 같아야) 해야 상수 시간으로 됩니다.
+PMR을 쓸 땐 같은 memory_resource를 쓰는 게 좋아요.
+
+요약: ?에는 Allocator 타입이 들어가고, 기본은 std::allocator<int>입니다. 필요할 때만 커스텀/PMR 할당자를 지정하세요.
+
+
+
+
+
+
+
+
+
+
+
+
 #ifndef _STL_VECTOR_H / #define _STL_VECTOR_H 1
 -> 헤더가드
 

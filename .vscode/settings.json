@@ -48,7 +48,10 @@
     "cwchar": "cpp",
     "cwctype": "cpp",
     "numbers": "cpp",
-    "stdexcept": "cpp"
+    "stdexcept": "cpp",
+    "cstdarg": "cpp",
+    "iostream": "cpp",
+    "istream": "cpp"
   },
 
   "C_Cpp.default.includePath": [
