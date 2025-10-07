@@ -51,7 +51,13 @@
     "stdexcept": "cpp",
     "cstdarg": "cpp",
     "iostream": "cpp",
-    "istream": "cpp"
+    "istream": "cpp",
+    "list": "cpp",
+    "stop_token": "cpp",
+    "condition_variable": "cpp",
+    "ratio": "cpp",
+    "semaphore": "cpp",
+    "shared_mutex": "cpp"
   },
 
   "C_Cpp.default.includePath": [

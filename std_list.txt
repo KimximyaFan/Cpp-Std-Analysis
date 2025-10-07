@@ -221,3 +221,1156 @@ insert/splice/reverse/sort/merge 등으로 순서가 바뀌어도 그 노드 이
 지운 노드를 가리키는 이터레이터를 쓰면 UB입니다.
 요약: 이터레이터는 그 노드의 주소를 들고 있으니, 찾는 과정만 빼면 **조회/삽입/삭제가 전부 O(1)**입니다. 탐색이 필요할 때만 O(n)
   */
+
+
+
+/*
+   Node Base
+
+   _List_node_base는 prev/next 두 포인터만 가진 베이스.
+리스트는 헤더 노드(센티널) 를 갖고, 비었을 때 head->next == head->prev == &head.
+표준 연산과 1:1로 매핑되는 저수준 포인터 조작기.
+요약 표
+swap(_List_node_base& x, _List_node_base& y): 두 헤더 노드가 가리키는 리스트 내용을 통째로 O(1)에 맞바꿈. 
+std::list::swap의 핵심. (빈 리스트/비비 아닌 경우를 분기)
+
+_M_hook(_List_node_base* pos): this 노드를 pos 앞에 끼워 넣음. = 단일 노드 insert.
+
+_M_unhook(): this 노드를 현재 리스트에서 빼내기. 이웃끼리 서로 물어주고 this는 고립됨. = 단일 노드 erase의 핵심.
+_M_transfer(_List_node_base* first, _List_node_base* last): 반열린 구간 [first, last) 를 
+this 노드 앞으로 통째로 이동(스플라이스). 구간 길이와 무관하게 O(1). std::list::splice의 핵심.
+_M_reverse(): 헤더(보통 this가 헤더일 때) 기준 리스트의 순서를 뒤집기. 모든 노드의 next/prev를 맞바꿈.
+
+
+// Supporting structures are split into common and templated
+// types; the latter publicly inherits from the former in an
+// effort to reduce code duplication.  This results in some
+// "needless" static_cast'ing later on, but it's all safe
+// downcasting.
+
+*/
+
+
+/// Common part of a node in the %list.
+struct _List_node_base
+{
+_List_node_base* _M_next;
+_List_node_base* _M_prev;
+
+static void
+swap(_List_node_base& __x, _List_node_base& __y) _GLIBCXX_USE_NOEXCEPT;
+
+void
+_M_transfer(_List_node_base* const __first,
+   _List_node_base* const __last) _GLIBCXX_USE_NOEXCEPT;
+
+void
+_M_reverse() _GLIBCXX_USE_NOEXCEPT;
+
+void
+_M_hook(_List_node_base* const __position) _GLIBCXX_USE_NOEXCEPT;
+
+void
+_M_unhook() _GLIBCXX_USE_NOEXCEPT;
+};
+
+
+
+/*
+   Node Header
+*/
+
+/// The %list node header.
+struct _List_node_header : public _List_node_base
+{
+#if _GLIBCXX_USE_CXX11_ABI
+std::size_t _M_size;
+#endif
+
+_List_node_header() _GLIBCXX_NOEXCEPT
+{ _M_init(); }
+
+#if __cplusplus >= 201103L
+_List_node_header(_List_node_header&& __x) noexcept
+: _List_node_base{ __x._M_next, __x._M_prev }
+# if _GLIBCXX_USE_CXX11_ABI
+, _M_size(__x._M_size)
+# endif
+{
+if (__x._M_base()->_M_next == __x._M_base())
+this->_M_next = this->_M_prev = this;
+else
+{
+   this->_M_next->_M_prev = this->_M_prev->_M_next = this->_M_base();
+   __x._M_init();
+}
+}
+
+void
+_M_move_nodes(_List_node_header&& __x)
+{
+_List_node_base* const __xnode = __x._M_base();
+if (__xnode->_M_next == __xnode)
+_M_init();
+else
+{
+   _List_node_base* const __node = this->_M_base();
+   __node->_M_next = __xnode->_M_next;
+   __node->_M_prev = __xnode->_M_prev;
+   __node->_M_next->_M_prev = __node->_M_prev->_M_next = __node;
+# if _GLIBCXX_USE_CXX11_ABI
+   _M_size = __x._M_size;
+# endif
+   __x._M_init();
+}
+}
+#endif
+
+void
+_M_init() _GLIBCXX_NOEXCEPT
+{
+this->_M_next = this->_M_prev = this;
+#if _GLIBCXX_USE_CXX11_ABI
+this->_M_size = 0;
+#endif
+}
+
+private:
+_List_node_base* _M_base() { return this; }
+};
+
+
+/*
+   Actual Node
+*/
+
+/// An actual node in the %list.
+template<typename _Tp>
+struct _List_node : public __detail::_List_node_base
+{
+#if __cplusplus >= 201103L
+__gnu_cxx::__aligned_membuf<_Tp> _M_storage;
+_Tp*       _M_valptr()       { return _M_storage._M_ptr(); }
+_Tp const* _M_valptr() const { return _M_storage._M_ptr(); }
+#else
+_Tp _M_data;
+_Tp*       _M_valptr()       { return std::__addressof(_M_data); }
+_Tp const* _M_valptr() const { return std::__addressof(_M_data); }
+#endif
+};
+
+
+/*
+   impl = “implementation(구현)” 의 줄임말
+*/
+
+struct _List_impl
+: public _Node_alloc_type
+{
+__detail::_List_node_header _M_node;
+
+_List_impl() _GLIBCXX_NOEXCEPT_IF(
+   is_nothrow_default_constructible<_Node_alloc_type>::value)
+: _Node_alloc_type()
+{ }
+
+_List_impl(const _Node_alloc_type& __a) _GLIBCXX_NOEXCEPT
+: _Node_alloc_type(__a)
+{ }
+
+#if __cplusplus >= 201103L
+_List_impl(_List_impl&&) = default;
+
+_List_impl(_Node_alloc_type&& __a, _List_impl&& __x)
+: _Node_alloc_type(std::move(__a)), _M_node(std::move(__x._M_node))
+{ }
+
+_List_impl(_Node_alloc_type&& __a) noexcept
+: _Node_alloc_type(std::move(__a))
+{ }
+#endif
+};
+
+
+
+/*
+
+#####  ####    ###   #   #  #####  
+#      #   #  #   #  ##  #    #    
+####   ####   #   #  # # #    #    
+#      # #    #   #  #  ##    #    
+#      #  #    ###   #   #    #    
+
+####    ###    ####  #   #  
+#   #  #   #  #      #  #   
+####   #####  #      ###    
+#   #  #   #  #      #  #   
+####   #   #   ####  #   #  
+
+####   #####   ####  #####  #   #  
+#   #  #      #        #    ##  #  
+####   ###    # ##     #    # # #  
+#   #  #      #  #     #    #  ##  
+####   #####   ####  #####  #   #  
+
+#####  #   #  ####   
+#      ##  #  #   #  
+###    # # #  #   #  
+#      #  ##  #   #  
+#####  #   #  ####   
+
+*/
+
+/*
+   Front
+*/
+
+// element access
+/**
+ *  Returns a read/write reference to the data at the first
+ *  element of the %list.
+ */
+_GLIBCXX_NODISCARD
+reference
+front() _GLIBCXX_NOEXCEPT
+{ return *begin(); }
+
+/**
+ *  Returns a read-only (constant) reference to the data at the first
+ *  element of the %list.
+ */
+_GLIBCXX_NODISCARD
+const_reference
+front() const _GLIBCXX_NOEXCEPT
+{ return *begin(); }
+
+/*
+   Back
+*/
+
+/**
+ *  Returns a read/write reference to the data at the last element
+ *  of the %list.
+ */
+_GLIBCXX_NODISCARD
+reference
+back() _GLIBCXX_NOEXCEPT
+{
+iterator __tmp = end();
+--__tmp;
+return *__tmp;
+}
+
+/**
+ *  Returns a read-only (constant) reference to the data at the last
+ *  element of the %list.
+ */
+_GLIBCXX_NODISCARD
+const_reference
+back() const _GLIBCXX_NOEXCEPT
+{
+const_iterator __tmp = end();
+--__tmp;
+return *__tmp;
+}
+
+/*
+   Begin
+*/
+
+// iterators
+/**
+ *  Returns a read/write iterator that points to the first element in the
+ *  %list.  Iteration is done in ordinary element order.
+ */
+_GLIBCXX_NODISCARD
+iterator
+begin() _GLIBCXX_NOEXCEPT
+{ return iterator(this->_M_impl._M_node._M_next); }
+
+/**
+ *  Returns a read-only (constant) iterator that points to the
+ *  first element in the %list.  Iteration is done in ordinary
+ *  element order.
+ */
+_GLIBCXX_NODISCARD
+const_iterator
+begin() const _GLIBCXX_NOEXCEPT
+{ return const_iterator(this->_M_impl._M_node._M_next); }
+
+
+/*
+   End
+*/
+
+/**
+ *  Returns a read/write iterator that points one past the last
+ *  element in the %list.  Iteration is done in ordinary element
+ *  order.
+ */
+_GLIBCXX_NODISCARD
+iterator
+end() _GLIBCXX_NOEXCEPT
+{ return iterator(&this->_M_impl._M_node); }
+
+/**
+ *  Returns a read-only (constant) iterator that points one past
+ *  the last element in the %list.  Iteration is done in ordinary
+ *  element order.
+ */
+_GLIBCXX_NODISCARD
+const_iterator
+end() const _GLIBCXX_NOEXCEPT
+{ return const_iterator(&this->_M_impl._M_node); }
+
+
+
+
+
+/*
+
+ ####  #      #####   ###   ####   
+#      #      #      #   #  #   #  
+#      #      ###    #####  ####   
+#      #      #      #   #  # #    
+ ####  #####  #####  #   #  #  #   
+
+*/
+
+
+/*
+   Clear
+
+*  Erases all the elements.  Note that this function only erases
+*  the elements, and that if the elements themselves are
+*  pointers, the pointed-to memory is not touched in any way.
+*  Managing the pointer is the user's responsibility.
+*/
+
+void
+clear() _GLIBCXX_NOEXCEPT
+{
+   _Base::_M_clear();
+   _Base::_M_init();
+}
+
+/*
+   _M_clear()
+
+   노드 자체 메모리는 잘 수거함,
+   만약 포인터를 담았다면, 포인터가 가리키는건 못수거함
+*/
+
+template<typename _Tp, typename _Alloc>
+void
+_List_base<_Tp, _Alloc>::
+_M_clear() _GLIBCXX_NOEXCEPT
+{
+   typedef _List_node<_Tp>  _Node;
+   __detail::_List_node_base* __cur = _M_impl._M_node._M_next;
+   while (__cur != &_M_impl._M_node)
+   {
+      _Node* __tmp = static_cast<_Node*>(__cur);
+      __cur = __tmp->_M_next;
+      _Tp* __val = __tmp->_M_valptr();
+      #if __cplusplus >= 201103L
+      _Node_alloc_traits::destroy(_M_get_Node_allocator(), __val);
+      #else
+      _Tp_alloc_type(_M_get_Node_allocator()).destroy(__val);
+      #endif
+      _M_put_node(__tmp);
+   }
+}
+
+/*
+   _M_init()
+*/
+void
+_M_init() _GLIBCXX_NOEXCEPT
+{ this->_M_impl._M_node._M_init(); }
+
+/*
+   this->_M_impl._M_node._M_init()
+*/
+void
+_M_init() _GLIBCXX_NOEXCEPT
+{
+   this->_M_next = this->_M_prev = this;
+   #if _GLIBCXX_USE_CXX11_ABI
+   this->_M_size = 0;
+   #endif
+}
+
+
+
+
+/*
+
+#####   #   #   ####  #####  ####    #####
+  #     ##  #  #      #      #   #     #  
+  #     # # #   ###   ###    ####      #  
+  #     #  ##      #  #      #  #      #  
+#####   #   #   ####  #####  #   #     #  
+
+*/
+
+/**
+ *  @brief  Inserts given value into %list before specified iterator.
+ *  @param  __position  A const_iterator into the %list.
+ *  @param  __x  Data to be inserted.
+ *  @return  An iterator that points to the inserted data.
+ *
+ *  This function will insert a copy of the given value before
+ *  the specified location.  Due to the nature of a %list this
+ *  operation can be done in constant time, and does not
+ *  invalidate iterators and references.
+ */
+
+
+/*
+   _M_valptr
+*/
+struct _List_node : public __detail::_List_node_base
+{
+__gnu_cxx::__aligned_membuf<_Tp> _M_storage;
+_Tp*       _M_valptr()       { return _M_storage._M_ptr(); }
+}
+
+/*
+   _M_get_node
+*/
+typename _Node_alloc_traits::pointer
+_M_get_node()
+{ return _Node_alloc_traits::allocate(_M_impl, 1); }
+
+ /*
+   _M_create_node
+
+   1) 메모리만 확보: _M_get_node()가 _Node용 원시 메모리를 할당합니다(아직 값은 없음). 컨테이너의 노드 풀/할당자를 통해 가져와요.
+   2) 노드용 할당자 참조: 노드(링크 + 값 저장)를 관리하는 노드 전용 할당자를 꺼냅니다. 컨테이너가 allocator-aware이므로 new/delete 대신 이걸 써야 해요.
+   3) 예외 안전 가드 설정(RAII): __guard는 소멸 시 __alloc.deallocate(__p, 1) 같은 걸 호출하는 스코프 가드.
+      → 이후 생성 중 예외가 터지면 자동으로 메모리 회수(누수 방지).
+   4) 값 생성(emplace): allocator_traits::construct로 노드 안의 값 위치(_M_valptr()가 가리키는 곳)에 자리 지정 생성(placement new).
+ */
+template<typename... _Args>
+_Node*
+_M_create_node(_Args&&... __args)
+{
+   auto __p = this->_M_get_node();
+   auto& __alloc = _M_get_Node_allocator();
+   __allocated_ptr<_Node_alloc_type> __guard{__alloc, __p};
+   _Node_alloc_traits::construct(__alloc, __p->_M_valptr(),
+            std::forward<_Args>(__args)...);
+   __guard = nullptr;
+   return __p;
+}
+
+/*
+   insert(const_iterator __position, const value_type& __x)
+
+   _M_hook(_List_node_base* pos): this 노드를 pos 앞에 끼워 넣음. = 단일 노드 insert.
+*/
+
+template<typename _Tp, typename _Alloc>
+typename list<_Tp, _Alloc>::iterator
+list<_Tp, _Alloc>::
+#if __cplusplus >= 201103L
+insert(const_iterator __position, const value_type& __x)
+#else
+insert(iterator __position, const value_type& __x)
+#endif
+{
+   _Node* __tmp = _M_create_node(__x);
+   __tmp->_M_hook(__position._M_const_cast()._M_node);
+   this->_M_inc_size(1);
+   return iterator(__tmp);
+}
+
+/*
+   insert(const_iterator __position, value_type&& __x)
+*/
+/**
+ *  @brief  Inserts given rvalue into %list before specified iterator.
+ *  @param  __position  A const_iterator into the %list.
+ *  @param  __x  Data to be inserted.
+ *  @return  An iterator that points to the inserted data.
+ *
+ *  This function will insert a copy of the given rvalue before
+ *  the specified location.  Due to the nature of a %list this
+ *  operation can be done in constant time, and does not
+ *  invalidate iterators and references.
+*/
+iterator
+insert(const_iterator __position, value_type&& __x)
+{ return emplace(__position, std::move(__x)); }
+
+/*
+   insert(const_iterator __p, initializer_list<value_type> __l)
+
+   std::list는 각 원소 삽입이 포인터 연결 O(1)이지만, 원소를 k번 생성/복사(또는 이동) 해야 해서 총 k번의 작업이 듭니다.
+
+   O(K)
+*/
+/**
+ *  @brief  Inserts the contents of an initializer_list into %list
+ *          before specified const_iterator.
+ *  @param  __p  A const_iterator into the %list.
+ *  @param  __l  An initializer_list of value_type.
+ *  @return  An iterator pointing to the first element inserted
+ *           (or __position).
+ *
+ *  This function will insert copies of the data in the
+ *  initializer_list @a l into the %list before the location
+ *  specified by @a p.
+ *
+ *  This operation is linear in the number of elements inserted and
+ *  does not invalidate iterators and references.
+ */
+iterator
+insert(const_iterator __p, initializer_list<value_type> __l)
+{ return this->insert(__p, __l.begin(), __l.end()); }
+
+/*
+   insert(const_iterator __position, _InputIterator __first,
+      _InputIterator __last)
+
+   O(K)
+
+   O(1) 하려면 splice 써야함
+*/
+
+/**
+ *  @brief  Inserts a range into the %list.
+ *  @param  __position  A const_iterator into the %list.
+ *  @param  __first  An input iterator.
+ *  @param  __last   An input iterator.
+ *  @return  An iterator pointing to the first element inserted
+ *           (or __position).
+ *
+ *  This function will insert copies of the data in the range [@a
+ *  first,@a last) into the %list before the location specified by
+ *  @a position.
+ *
+ *  This operation is linear in the number of elements inserted and
+ *  does not invalidate iterators and references.
+ */
+template<typename _InputIterator,
+      typename = std::_RequireInputIter<_InputIterator>>
+iterator
+insert(const_iterator __position, _InputIterator __first, _InputIterator __last);
+
+
+
+
+
+
+/*
+
+#####   ####    ###    ####  #####
+#       #   #  #   #  #      #
+###     ####   #####   ###   ###
+#       #  #   #   #      #  #
+#####   #   #  #   #  ####   #####
+
+*/
+
+/*
+   _M_const_cast
+
+   같은 위치의 “일반 iterator”로 바꾸는 내부 유틸이에요.
+   libstdc++에서 list 계열 이터레이터는 내부적으로 같은 노드 포인터를 공유하므로, 
+   컨테이너 내부 구현 코드에선 위치만 필요할 때 const_iterator → iterator로 캐스팅해 쓰죠
+*/
+iterator
+_M_const_cast() const _GLIBCXX_NOEXCEPT
+{ return iterator(const_cast<__detail::_List_node_base*>(_M_node)); }
+
+/*
+   _M_erase
+*/
+
+// Erases element at position given.
+void
+_M_erase(iterator __position) _GLIBCXX_NOEXCEPT
+{
+   this->_M_dec_size(1);
+   __position._M_node->_M_unhook();
+   _Node* __n = static_cast<_Node*>(__position._M_node);
+   #if __cplusplus >= 201103L
+      _Node_alloc_traits::destroy(_M_get_Node_allocator(), __n->_M_valptr());
+   #else
+      _Tp_alloc_type(_M_get_Node_allocator()).destroy(__n->_M_valptr());
+   #endif
+
+   _M_put_node(__n);
+}
+
+/*
+   erase(const_iterator __position)
+*/
+
+/**
+ *  @brief  Remove element at given position.
+ *  @param  __position  Iterator pointing to element to be erased.
+ *  @return  An iterator pointing to the next element (or end()).
+ *
+ *  This function will erase the element at the given position and thus
+ *  shorten the %list by one.
+ *
+ *  Due to the nature of a %list this operation can be done in
+ *  constant time, and only invalidates iterators/references to
+ *  the element being removed.  The user is also cautioned that
+ *  this function only erases the element, and that if the element
+ *  is itself a pointer, the pointed-to memory is not touched in
+ *  any way.  Managing the pointer is the user's responsibility.
+ */
+template<typename _Tp, typename _Alloc>
+typename list<_Tp, _Alloc>::iterator
+list<_Tp, _Alloc>::
+#if __cplusplus >= 201103L
+erase(const_iterator __position) noexcept
+#else
+erase(iterator __position)
+#endif
+{
+   iterator __ret = iterator(__position._M_node->_M_next);
+   _M_erase(__position._M_const_cast());
+   return __ret;
+}
+
+/*
+   erase(const_iterator __first, const_iterator __last)
+
+   while 문으로 계속 erase 돌림
+*/
+
+/**
+ *  @brief  Remove a range of elements.
+ *  @param  __first  Iterator pointing to the first element to be erased.
+ *  @param  __last  Iterator pointing to one past the last element to be
+ *                erased.
+ *  @return  An iterator pointing to the element pointed to by @a last
+ *           prior to erasing (or end()).
+ *
+ *  This function will erase the elements in the range @a
+ *  [first,last) and shorten the %list accordingly.
+ *
+ *  This operation is linear time in the size of the range and only
+ *  invalidates iterators/references to the element being removed.
+ *  The user is also cautioned that this function only erases the
+ *  elements, and that if the elements themselves are pointers, the
+ *  pointed-to memory is not touched in any way.  Managing the pointer
+ *  is the user's responsibility.
+ */
+#if __cplusplus >= 201103L
+erase(const_iterator __first, const_iterator __last) noexcept
+#else
+erase(iterator __first, iterator __last)
+#endif
+{
+   while (__first != __last)
+      __first = erase(__first);
+
+   return __last._M_const_cast();
+}
+
+
+
+
+/*
+
+####   #   #   ####   #   #      #####  ####    ###   #   #  #####
+#   #  #   #  #       #   #      #      #   #  #   #  ##  #    #
+####   #   #   ###    #####      ####   ####   #   #  # # #    #
+#      #   #      #   #   #      #      # #    #   #  #  ##    #
+#      #####   ####   #   #      #      #  #    ###   #   #    #
+
+
+####   #   #   ####   #   #      ####    ###    ####  #   #
+#   #  #   #  #       #   #      #   #  #   #  #      #  #
+####   #   #   ###    #####      ####   #####  #      ###
+#      #   #      #   #   #      #   #  #   #  #      #  #
+#      #####   ####   #   #      ####   #   #   ####  #   #
+
+
+####    ###   ####        #####  ####    ###   #   #  #####
+#   #  #   #  #   #       #      #   #  #   #  ##  #    #
+####   #   #  ####        ####   ####   #   #  # # #    #
+#      #   #  #           #      # #    #   #  #  ##    #
+#       ###   #           #      #  #    ###   #   #    #
+
+
+####    ###   ####        ####    ###    ####  #   #
+#   #  #   #  #   #       #   #  #   #  #      #  #
+####   #   #  ####        ####   #####  #      ###
+#      #   #  #           #   #  #   #  #      #  #
+#       ###   #           ####   #   #   ####  #   #
+
+*/
+
+/*
+   _M_hook
+
+   노드를 pos 앞에 끼워 넣음
+*/
+void
+_List_node_base::
+_M_hook(_List_node_base* const __position) _GLIBCXX_USE_NOEXCEPT
+{
+   this->_M_next = __position;
+   this->_M_prev = __position->_M_prev;
+   __position->_M_prev->_M_next = this;
+   __position->_M_prev = this;
+}
+
+/*
+   _M_insert
+*/
+
+template<typename... _Args>
+void
+_M_insert(iterator __position, _Args&&... __args)
+{
+   _Node* __tmp = _M_create_node(std::forward<_Args>(__args)...);
+   __tmp->_M_hook(__position._M_node);
+   this->_M_inc_size(1);
+}
+
+// [23.2.2.3] modifiers
+/**
+ *  @brief  Add data to the front of the %list.
+ *  @param  __x  Data to be added.
+ *
+ *  This is a typical stack operation.  The function creates an
+ *  element at the front of the %list and assigns the given data
+ *  to it.  Due to the nature of a %list this operation can be
+ *  done in constant time, and does not invalidate iterators and
+ *  references.
+ */
+void
+push_front(const value_type& __x)
+{ this->_M_insert(begin(), __x); }
+
+#if __cplusplus >= 201103L
+void
+push_front(value_type&& __x)
+{ this->_M_insert(begin(), std::move(__x)); }
+
+/**
+ *  @brief  Add data to the end of the %list.
+ *  @param  __x  Data to be added.
+ *
+ *  This is a typical stack operation.  The function creates an
+ *  element at the end of the %list and assigns the given data to
+ *  it.  Due to the nature of a %list this operation can be done
+ *  in constant time, and does not invalidate iterators and
+ *  references.
+ */
+void
+push_back(const value_type& __x)
+{ this->_M_insert(end(), __x); }
+
+#if __cplusplus >= 201103L
+void
+push_back(value_type&& __x)
+{ this->_M_insert(end(), std::move(__x)); }
+
+/**
+ *  @brief  Removes first element.
+ *
+ *  This is a typical stack operation.  It shrinks the %list by
+ *  one.  Due to the nature of a %list this operation can be done
+ *  in constant time, and only invalidates iterators/references to
+ *  the element being removed.
+ *
+ *  Note that no data is returned, and if the first element's data
+ *  is needed, it should be retrieved before pop_front() is
+ *  called.
+ */
+void
+pop_front() _GLIBCXX_NOEXCEPT
+{ this->_M_erase(begin()); }
+
+/**
+ *  @brief  Removes last element.
+ *
+ *  This is a typical stack operation.  It shrinks the %list by
+ *  one.  Due to the nature of a %list this operation can be done
+ *  in constant time, and only invalidates iterators/references to
+ *  the element being removed.
+ *
+ *  Note that no data is returned, and if the last element's data
+ *  is needed, it should be retrieved before pop_back() is called.
+ */
+void
+pop_back() _GLIBCXX_NOEXCEPT
+{ this->_M_erase(iterator(this->_M_impl._M_node._M_prev)); }
+
+
+
+
+
+/*
+
+#####  #   #  ####   #       ###    ####  #####
+#      ## ##  #   #  #      #   #  #      #
+####   # # #  ####   #      #####  #      ####
+#      #   #  #      #      #   #  #      #
+#####  #   #  #      #####  #   #   ####  #####
+
+
+#####  #   #  ####   #       ##     ####  #####   ####   ###    ####  #   #
+#      ## ##  #   #  #      #   #  #      #       #   # #   #  #      # # 
+####   # # #  ####   #      #####  #      ####    ####  #####  #      ##  
+#      #   #  #      #      #   #  #      #       #   # #   #  #      # #
+#####  #   #  #      #####  #   #   ####  #####   ####  #   #   ####  #   #
+
+
+#####  #   #  ####   #       ###    ####  #####   #####  ####   ###   #   #  #####
+#      ## ##  #   #  #      #   #  #      #       #      #   # #   #  ##  #    #
+####   # # #  ####   #      #####  #      ####    ####   ####  #   #  # # #    #
+#      #   #  #      #      #   #  #      #       #      #  #  #   #  #  ##    #
+#####  #   #  #      #####  #   #   ####  #####   #      #   #  ###   #   #    #
+
+
+
+
+값(=완성된 객체)을 넣으려면 insert, 재료(생성자 인자)로 바로 만들어 넣으려면 emplace
+
+*/
+
+/*
+   Emplace
+*/
+template<typename _Tp, typename _Alloc>
+template<typename... _Args>
+typename list<_Tp, _Alloc>::iterator
+list<_Tp, _Alloc>::
+emplace(const_iterator __position, _Args&&... __args)
+{
+   _Node* __tmp = _M_create_node(std::forward<_Args>(__args)...);
+   __tmp->_M_hook(__position._M_const_cast()._M_node);
+   this->_M_inc_size(1);
+   return iterator(__tmp);
+}
+
+/*
+   Emplace Front
+*/
+template<typename... _Args>
+#if __cplusplus > 201402L
+reference
+#else
+void
+#endif
+emplace_front(_Args&&... __args)
+{
+   this->_M_insert(begin(), std::forward<_Args>(__args)...);
+   #if __cplusplus > 201402L
+      return front();
+   #endif
+}
+
+/*
+   Empalce Back
+*/
+template<typename... _Args>
+#if __cplusplus > 201402L
+reference
+#else
+void
+#endif
+emplace_back(_Args&&... __args)
+{
+   this->_M_insert(end(), std::forward<_Args>(__args)...);
+   #if __cplusplus > 201402L
+      return back();
+   #endif
+}
+
+
+/*
+
+####   #####  #   #   ####   #     #  #####
+#   #  #      ## ##  #    #  #     #  #
+####   ###    # # #  #    #   #   #   ###
+#  #   #      #   #  #    #    # #    #
+#   #  #####  #   #   ####      #     #####
+
+
+####   #####  #   #   ####   #     #  #####    ###  ######
+#   #  #      ## ##  #    #  #     #  #         #   #
+####   ###    # # #  #    #   #   #   ###       #   ###
+#  #   #      #   #  #    #    # #    #         #   #
+#   #  #####  #   #   ####      #     #####    ###  #
+
+
+
+
+리스트를 순회하면서 *it == value인 노드들을 **O(1) splice**로 임시 리스트(__to_destroy)로 옮겨두고, 
+루프가 끝난 뒤 임시 리스트가 스코프에서 파괴될 때 그 노드들이 한꺼번에 소멸/해제됩니다. C++20 모드에선 제거한 개수를 반환
+
+*/
+
+
+/*
+*  @brief  Remove all elements equal to value.
+*  @param  __value  The value to remove.
+*
+*  Removes every element in the list equal to @a value.
+*  Remaining elements stay in list order.  Note that this
+*  function only erases the elements, and that if the elements
+*  themselves are pointers, the pointed-to memory is not
+*  touched in any way.  Managing the pointer is the user's
+*  responsibility.
+*/
+
+template<typename _Tp, typename _Alloc>
+typename list<_Tp, _Alloc>::__remove_return_type
+list<_Tp, _Alloc>::
+remove(const value_type& __value)
+{
+   #if !_GLIBCXX_USE_CXX11_ABI
+      size_type __removed __attribute__((__unused__)) = 0;
+   #endif
+
+   list __to_destroy(get_allocator());
+   iterator __first = begin();
+   iterator __last = end();
+
+   while (__first != __last)
+   {
+      iterator __next = __first;
+      ++__next;
+
+      if (*__first == __value)
+      {
+         // _GLIBCXX_RESOLVE_LIB_DEFECTS
+         // 526. Is it undefined if a function in the standard changes
+         // in parameters?
+         __to_destroy.splice(__to_destroy.begin(), *this, __first);
+         #if !_GLIBCXX_USE_CXX11_ABI
+            _GLIBCXX20_ONLY( __removed++ );
+         #endif
+      }
+
+      __first = __next;
+   }
+
+   #if !_GLIBCXX_USE_CXX11_ABI
+      return _GLIBCXX20_ONLY( __removed );
+   #else
+      return _GLIBCXX20_ONLY( __to_destroy.size() );
+   #endif
+}
+
+
+/**
+ *  @brief  Remove all elements satisfying a predicate.
+ *  @tparam  _Predicate  Unary predicate function or object.
+ *
+ *  Removes every element in the list for which the predicate
+ *  returns true.  Remaining elements stay in list order.  Note
+ *  that this function only erases the elements, and that if the
+ *  elements themselves are pointers, the pointed-to memory is
+ *  not touched in any way.  Managing the pointer is the user's
+ *  responsibility.
+ */
+
+template<typename _Tp, typename _Alloc>
+template <typename _Predicate>
+typename list<_Tp, _Alloc>::__remove_return_type
+list<_Tp, _Alloc>::
+remove_if(_Predicate __pred)
+{
+   #if !_GLIBCXX_USE_CXX11_ABI
+      size_type __removed __attribute__((__unused__)) = 0;
+   #endif
+
+   list __to_destroy(get_allocator());
+   iterator __first = begin();
+   iterator __last = end();
+
+   while (__first != __last)
+   {
+      iterator __next = __first;
+      ++__next;
+      if (__pred(*__first))
+      {
+         __to_destroy.splice(__to_destroy.begin(), *this, __first);
+         #if !_GLIBCXX_USE_CXX11_ABI
+            _GLIBCXX20_ONLY( __removed++ );
+         #endif
+      }
+      __first = __next;
+   }
+
+   #if !_GLIBCXX_USE_CXX11_ABI
+      return _GLIBCXX20_ONLY( __removed );
+   #else
+      return _GLIBCXX20_ONLY( __to_destroy.size() );
+   #endif
+}
+
+/*
+
+#####  #   #  ####   #####  #   #
+#      ## ##  #   #    #     # #
+###    # # #  ####     #      #
+#      #   #  #        #      #
+#####  #   #  #        #      #
+
+
+ ####   ###   #####  #####
+#        #       #   #
+ ###     #      #    ###
+    #    #     #     #
+####    ###   #####  #####
+
+*/
+
+bool empty() const { return _M_next == this; }
+
+/**  Returns the number of elements in the %list.  */
+_GLIBCXX_NODISCARD
+size_type
+size() const _GLIBCXX_NOEXCEPT
+{ return _M_node_count(); }
+
+
+/*
+
+#   #  #####  ####    ###   #####
+## ##  #      #   #  #      #
+# # #  ###    ####   #  ##  ###
+#   #  #      #  #   #   #  #
+#   #  #####  #   #   ###   #####
+
+
+
+
+정렬돼 있는 두 std::list를 “비교 → 한 노드씩 splice”로 섞어 붙이는 내부 구현이에요. 
+소 복사/이동 없이 포인터 재배선만 하므로 각 이동은 O(1), 전체는 비교 횟수 기준 O(n+m)
+
+*/
+
+/*
+   _M_transfer
+
+   노드 구간 [first, last) 를 this 노드(= 위치 노드) 앞으로 옮기는 저수준 스플라이스입니다.
+   복사/이동 없이 포인터 재배선만 하므로 **상수 시간 O(1)**에 동작
+*/
+
+void
+_List_node_base::
+_M_transfer(_List_node_base * const __first,
+_List_node_base * const __last) _GLIBCXX_USE_NOEXCEPT
+{
+   if (this != __last)
+   {
+      // Remove [first, last) from its old position.
+      __last->_M_prev->_M_next  = this;
+      __first->_M_prev->_M_next = __last;
+      this->_M_prev->_M_next    = __first;
+
+      // Splice [first, last) into its new position.
+      _List_node_base* const __tmp = this->_M_prev;
+      this->_M_prev                = __last->_M_prev;
+      __last->_M_prev              = __first->_M_prev;
+      __first->_M_prev             = __tmp;
+   }
+}
+
+
+
+
+/**
+ *  @brief  Merge sorted lists.
+ *  @param  __x  Sorted list to merge.
+ *
+ *  Assumes that both @a __x and this list are sorted according to
+ *  operator<().  Merges elements of @a __x into this list in
+ *  sorted order, leaving @a __x empty when complete.  Elements in
+ *  this list precede elements in @a __x that are equal.
+ * 
+ * 
+
+   자기 자신과 머지 금지(자기 자신이면 no-op).
+   같은 allocator인지 확인(달라서 노드 공유가 불가하면 보통 에러/UB 방지).
+   _Finalize_merge는 RAII 도우미: 머지 도중 예외가 나더라도 사이즈/소속 등의 불변식을 맞춰주도록 마무리 역할을 합니다
+
+   두 범위가 모두 남아있는 동안 진행.
+   비교 결과 두 번째 리스트의 현재 원소가 더 작으면, 그 한 노드만 this의 __first1 앞으로 O(1) 이동:
+   __next를 __first2에서 한 칸 증가시켜 [++__next]를 반열림 구간의 끝으로 써서 길이 1의 구간을 이동.
+   _M_transfer(pos, first, last) = [first,last) 구간을 pos 앞으로 splice.
+   그렇지 않으면 __first1만 한 칸 진행(안정적 머지: “<”일 때만 오른쪽에서 가져오므로 같을 때는 왼쪽 원소가 먼저 유지됨 → stable).
+ */
+
+template<typename _Tp, typename _Alloc>
+void
+list<_Tp, _Alloc>::
+#if __cplusplus >= 201103L
+merge(list&& __x)
+#else
+merge(list& __x)
+#endif
+{
+   // _GLIBCXX_RESOLVE_LIB_DEFECTS
+   // 300. list::merge() specification incomplete
+   if (this != std::__addressof(__x))
+   {
+      _M_check_equal_allocators(__x);
+
+      iterator __first1 = begin();
+      iterator __last1 = end();
+      iterator __first2 = __x.begin();
+      iterator __last2 = __x.end();
+
+      const _Finalize_merge __fin(*this, __x, __first2);
+
+      while (__first1 != __last1 && __first2 != __last2)
+      {
+         if (*__first2 < *__first1)
+         {
+            iterator __next = __first2;
+            _M_transfer(__first1, __first2, ++__next);
+            __first2 = __next;
+         }
+         else
+            ++__first1;
+      }
+         
+      if (__first2 != __last2)
+      {
+         _M_transfer(__last1, __first2, __last2);
+         __first2 = __last2;
+      }
+   }
+}
+
+void
+merge(list& __x)
+{ merge(std::move(__x)); }
+
+/**
+ *  @brief  Merge sorted lists according to comparison function.
+ *  @tparam _StrictWeakOrdering Comparison function defining
+ *  sort order.
+ *  @param  __x  Sorted list to merge.
+ *  @param  __comp  Comparison functor.
+ *
+ *  Assumes that both @a __x and this list are sorted according to
+ *  StrictWeakOrdering.  Merges elements of @a __x into this list
+ *  in sorted order, leaving @a __x empty when complete.  Elements
+ *  in this list precede elements in @a __x that are equivalent
+ *  according to StrictWeakOrdering().
+ */
+
+template<typename _StrictWeakOrdering>
+void
+merge(list&& __x, _StrictWeakOrdering __comp);
+
+template<typename _StrictWeakOrdering>
+void
+merge(list& __x, _StrictWeakOrdering __comp)
+{ merge(std::move(__x), __comp); }
