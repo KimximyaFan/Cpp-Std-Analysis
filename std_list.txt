@@ -1374,3 +1374,379 @@ template<typename _StrictWeakOrdering>
 void
 merge(list& __x, _StrictWeakOrdering __comp)
 { merge(std::move(__x), __comp); }
+
+
+
+
+
+
+
+/*
+
+  ###    ####    ####   ###    ####   #   #
+ #   #  #       #        #    #       ##  #
+ #####   ###     ###     #    # ####  # # #
+ #   #      #       #    #    #    #  #  ##
+ #   #  ####    ####    ###    ####   #   #
+
+
+
+
+기존 내용 전체를 새 내용으로 갈아끼우는 함수들
+
+*/
+
+/*
+   _M_fill_assign
+*/
+template<typename _Tp, typename _Alloc>
+void
+list<_Tp, _Alloc>::
+_M_fill_assign(size_type __n, const value_type& __val)
+{
+   iterator __i = begin();
+   for (; __i != end() && __n > 0; ++__i, --__n)
+      *__i = __val;
+   if (__n > 0)
+      insert(end(), __n, __val);
+   else
+      erase(__i, end());
+}
+
+/*
+   _M_assign_dispatch
+*/
+template<typename _Tp, typename _Alloc>
+template <typename _InputIterator>
+void
+list<_Tp, _Alloc>::
+_M_assign_dispatch(_InputIterator __first2, _InputIterator __last2,
+      __false_type)
+{
+   iterator __first1 = begin();
+   iterator __last1 = end();
+   for (; __first1 != __last1 && __first2 != __last2;
+   ++__first1, (void)++__first2)
+      *__first1 = *__first2;
+   if (__first2 == __last2)
+      erase(__first1, __last1);
+   else
+      insert(__last1, __first2, __last2);
+}
+
+/**
+ *  @brief  Assigns a given value to a %list.
+ *  @param  __n  Number of elements to be assigned.
+ *  @param  __val  Value to be assigned.
+ *
+ *  This function fills a %list with @a __n copies of the given
+ *  value.  Note that the assignment completely changes the %list
+ *  and that the resulting %list's size is the same as the number
+ *  of elements assigned.
+ * 
+ * 리스트를 크기 n 으로 만들고, 모든 원소를 val 복사본으로 채움
+ */
+void
+assign(size_type __n, const value_type& __val)
+{ _M_fill_assign(__n, __val); }
+
+/**
+ *  @brief  Assigns a range to a %list.
+ *  @param  __first  An input iterator.
+ *  @param  __last   An input iterator.
+ *
+ *  This function fills a %list with copies of the elements in the
+ *  range [@a __first,@a __last).
+ *
+ *  Note that the assignment completely changes the %list and
+ *  that the resulting %list's size is the same as the number of
+ *  elements assigned.
+ * 
+ *    [first,last)**의 원소들을 복사해 현재 리스트 내용 전체를 교체
+ *
+ *    assign(first, last)의 first/last는 “다른 컨테이너(다른 리스트 포함)”의 이터레이터여도 됩니다
+ */
+#if __cplusplus >= 201103L
+template<typename _InputIterator,
+      typename = std::_RequireInputIter<_InputIterator>>
+void
+assign(_InputIterator __first, _InputIterator __last)
+{ _M_assign_dispatch(__first, __last, __false_type()); }
+
+/**
+ *  @brief  Assigns an initializer_list to a %list.
+ *  @param  __l  An initializer_list of value_type.
+ *
+ *  Replace the contents of the %list with copies of the elements
+ *  in the initializer_list @a __l.  This is linear in __l.size().
+ * 
+ *    중괄호 리스트로 전체를 교체
+ */
+void
+assign(initializer_list<value_type> __l)
+{ this->_M_assign_dispatch(__l.begin(), __l.end(), __false_type()); }
+
+
+
+
+
+
+/*
+
+#   #  #   #  #####   ###   #   #  #####
+#   #  ##  #    #    #   #  #   #  #    
+#   #  # # #    #    #   #  #   #  ###  
+#   #  #  ##    #    #  ##  #   #  #    
+ ###   #   #  #####   ### #  ###   #####
+
+*/
+
+/**
+ *  @brief  Remove consecutive duplicate elements.
+ *
+ *  For each consecutive set of elements with the same value,
+ *  remove all but the first one.  Remaining elements stay in
+ *  list order.  Note that this function only erases the
+ *  elements, and that if the elements themselves are pointers,
+ *  the pointed-to memory is not touched in any way.  Managing
+ *  the pointer is the user's responsibility.
+ */
+template<typename _Tp, typename _Alloc>
+typename list<_Tp, _Alloc>::__remove_return_type
+list<_Tp, _Alloc>::
+unique()
+{
+   iterator __first = begin();
+   iterator __last = end();
+
+   if (__first == __last)
+      return _GLIBCXX20_ONLY( 0 );
+
+   #if !_GLIBCXX_USE_CXX11_ABI
+      size_type __removed __attribute__((__unused__)) = 0;
+   #endif
+
+   list __to_destroy(get_allocator());
+   iterator __next = __first;
+
+   while (++__next != __last)
+   {
+      if (*__first == *__next)
+      {
+         __to_destroy.splice(__to_destroy.begin(), *this, __next);
+         #if !_GLIBCXX_USE_CXX11_ABI
+            _GLIBCXX20_ONLY( __removed++ );
+         #endif
+      }
+      else
+         __first = __next;
+
+      __next = __first;
+   }
+
+   #if !_GLIBCXX_USE_CXX11_ABI
+      return _GLIBCXX20_ONLY( __removed );
+   #else
+      return _GLIBCXX20_ONLY( __to_destroy.size() );
+   #endif
+}
+
+/**
+ *  @brief  Remove consecutive elements satisfying a predicate.
+ *  @tparam _BinaryPredicate  Binary predicate function or object.
+ *
+ *  For each consecutive set of elements [first,last) that
+ *  satisfy predicate(first,i) where i is an iterator in
+ *  [first,last), remove all but the first one.  Remaining
+ *  elements stay in list order.  Note that this function only
+ *  erases the elements, and that if the elements themselves are
+ *  pointers, the pointed-to memory is not touched in any way.
+ *  Managing the pointer is the user's responsibility.
+ */
+template<typename _BinaryPredicate>
+__remove_return_type
+unique(_BinaryPredicate);
+
+
+
+
+
+/*
+
+ ####   #   #   #     ###   ####  
+#       #   #   #    #   #  #   # 
+ ###    #   #   #    #####  ####  
+    #    # # # #     #   #  #      
+ ####     #   #      #   #  #     
+
+*/
+
+
+/**
+ *  @brief  Swaps data with another %list.
+ *  @param  __x  A %list of the same element and allocator types.
+ *
+ *  This exchanges the elements between two lists in constant
+ *  time.  Note that the global std::swap() function is
+ *  specialized such that std::swap(l1,l2) will feed to this
+ *  function.
+ *
+ *  Whether the allocators are swapped depends on the allocator traits.
+ * 
+   부 포인터 재배선만 하므로 O(1)
+   두 리스트의 헤더(센티널) 노드를 맞바꿔서, 사실상 리스트 내용 전체를 통째로 교환합니다.
+   원소 복사/이동 없음 → 이터레이터/참조는 유효하지만, 이제 상대 리스트 소속
+   size 필드도 서로 교환
+ */
+void
+swap(list& __x) _GLIBCXX_NOEXCEPT
+{
+   __detail::_List_node_base::swap(this->_M_impl._M_node,
+            __x._M_impl._M_node);
+
+   size_t __xsize = __x._M_get_size();
+   __x._M_set_size(this->_M_get_size());
+   this->_M_set_size(__xsize);
+
+   _Node_alloc_traits::_S_on_swap(this->_M_get_Node_allocator(),
+                  __x._M_get_Node_allocator());
+}
+
+
+
+/*
+
+ ####   ###   ####   #####
+#      #   #  #   #    #  
+ ###   #   #  ####     #  
+    #  #   #  #  #     #  
+####    ###   #   #    #  
+
+*/
+
+/**
+ *  @brief  Sort the elements.
+ *
+ *  Sorts the elements of this list in NlogN time.  Equivalent
+ *  elements remain in list order.
+ */
+void
+sort();
+
+/**
+ *  @brief  Sort the elements according to comparison function.
+ *
+ *  Sorts the elements of this list in NlogN time.  Equivalent
+ *  elements remain in list order.
+ */
+template<typename _StrictWeakOrdering>
+void
+sort(_StrictWeakOrdering);
+
+
+
+
+
+/*
+
+ ####  ####   #       ###    ####  #####
+#      #   #  #        #    #      #    
+ ###   ####   #        #    #      #### 
+    #  #      #        #    #      #    
+####   #      #####   ###    ####  #####
+
+*/
+
+// [23.2.2.4] list operations
+/**
+ *  @brief  Insert contents of another %list.
+ *  @param  __position  Iterator referencing the element to insert before.
+ *  @param  __x  Source list.
+ *
+ *  The elements of @a __x are inserted in constant time in front of
+ *  the element referenced by @a __position.  @a __x becomes an empty
+ *  list.
+ *
+ *  Requires this != @a __x.
+ */
+void
+#if __cplusplus >= 201103L
+splice(const_iterator __position, list&& __x) noexcept
+#else
+splice(iterator __position, list& __x)
+#endif
+{
+   if (!__x.empty())
+   {
+      _M_check_equal_allocators(__x);
+
+      this->_M_transfer(__position._M_const_cast(),
+            __x.begin(), __x.end());
+
+      this->_M_inc_size(__x._M_get_size());
+      __x._M_set_size(0);
+   }
+}
+
+
+
+void
+splice(const_iterator __position, list& __x) noexcept
+{ splice(__position, std::move(__x)); }
+
+
+
+/**
+ *  @brief  Insert element from another %list.
+ *  @param  __position  Const_iterator referencing the element to
+ *                      insert before.
+ *  @param  __x  Source list.
+ *  @param  __i  Const_iterator referencing the element to move.
+ *
+ *  Removes the element in list @a __x referenced by @a __i and
+ *  inserts it into the current list before @a __position.
+ */
+void
+splice(const_iterator __position, list&& __x, const_iterator __i) noexcept
+
+
+/**
+ *  @brief  Insert range from another %list.
+ *  @param  __position  Const_iterator referencing the element to
+ *                      insert before.
+ *  @param  __x  Source list.
+ *  @param  __first  Const_iterator referencing the start of range in x.
+ *  @param  __last  Const_iterator referencing the end of range in x.
+ *
+ *  Removes elements in the range [__first,__last) and inserts them
+ *  before @a __position in constant time.
+ *
+ *  Undefined if @a __position is in [__first,__last).
+ */
+void
+splice(const_iterator __position, list& __x, const_iterator __first,
+   const_iterator __last) noexcept
+{ splice(__position, std::move(__x), __first, __last); }
+
+
+
+
+
+/*
+
+####   #####  #   #  #####  ####    ####   #####
+#   #  #      #   #  #      #   #  #       #
+####   ###    #   #  ###    ####    ###    ###
+#  #   #       # #   #      #  #       #   #
+#   #  #####    #    #####  #   #  ####    #####
+
+*/
+
+/**
+ *  @brief  Reverse the elements in list.
+ *
+ *  Reverse the order of elements in the list in linear time.
+ */
+void
+reverse() _GLIBCXX_NOEXCEPT
+{ this->_M_impl._M_node._M_reverse(); }
