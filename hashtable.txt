@@ -1,0 +1,227 @@
+/**
+   *  Primary class template _Hashtable.
+   *
+   *  @ingroup hashtable-detail
+   *
+   *  @tparam _Value  CopyConstructible type.
+   *
+   *  @tparam _Key    CopyConstructible type.
+   *
+   *  @tparam _Alloc  An allocator type
+   *  ([lib.allocator.requirements]) whose _Alloc::value_type is
+   *  _Value.  As a conforming extension, we allow for
+   *  _Alloc::value_type != _Value.
+   *
+   *  @tparam _ExtractKey  Function object that takes an object of type
+   *  _Value and returns a value of type _Key.
+   *
+   *  @tparam _Equal  Function object that takes two objects of type k
+   *  and returns a bool-like value that is true if the two objects
+   *  are considered equal.
+   *
+   *  @tparam _Hash  The hash function. A unary function object with
+   *  argument type _Key and result type size_t. Return values should
+   *  be distributed over the entire range [0, numeric_limits<size_t>:::max()].
+   *
+   *  @tparam _RangeHash  The range-hashing function (in the terminology of
+   *  Tavori and Dreizin).  A binary function object whose argument
+   *  types and result type are all size_t.  Given arguments r and N,
+   *  the return value is in the range [0, N).
+   *
+   *  @tparam _Unused  Not used.
+   *
+   *  @tparam _RehashPolicy  Policy class with three members, all of
+   *  which govern the bucket count. _M_next_bkt(n) returns a bucket
+   *  count no smaller than n.  _M_bkt_for_elements(n) returns a
+   *  bucket count appropriate for an element count of n.
+   *  _M_need_rehash(n_bkt, n_elt, n_ins) determines whether, if the
+   *  current bucket count is n_bkt and the current element count is
+   *  n_elt, we need to increase the bucket count for n_ins insertions.
+   *  If so, returns make_pair(true, n), where n is the new bucket count. If
+   *  not, returns make_pair(false, <anything>)
+   *
+   *  @tparam _Traits  Compile-time class with three boolean
+   *  std::integral_constant members:  __cache_hash_code, __constant_iterators,
+   *   __unique_keys.
+   *
+   *  Each _Hashtable data structure has:
+   *
+   *  - _Bucket[]       _M_buckets
+   *  - _Hash_node_base _M_before_begin
+   *  - size_type       _M_bucket_count
+   *  - size_type       _M_element_count
+   *
+   *  with _Bucket being _Hash_node_base* and _Hash_node containing:
+   *
+   *  - _Hash_node*   _M_next
+   *  - Tp            _M_value
+   *  - size_t        _M_hash_code if cache_hash_code is true
+   *
+   *  In terms of Standard containers the hashtable is like the aggregation of:
+   *
+   *  - std::forward_list<_Node> containing the elements
+   *  - std::vector<std::forward_list<_Node>::iterator> representing the buckets
+   *
+   *  The non-empty buckets contain the node before the first node in the
+   *  bucket. This design makes it possible to implement something like a
+   *  std::forward_list::insert_after on container insertion and
+   *  std::forward_list::erase_after on container erase
+   *  calls. _M_before_begin is equivalent to
+   *  std::forward_list::before_begin. Empty buckets contain
+   *  nullptr.  Note that one of the non-empty buckets contains
+   *  &_M_before_begin which is not a dereferenceable node so the
+   *  node pointer in a bucket shall never be dereferenced, only its
+   *  next node can be.
+   *
+   *  Walking through a bucket's nodes requires a check on the hash code to
+   *  see if each node is still in the bucket. Such a design assumes a
+   *  quite efficient hash functor and is one of the reasons it is
+   *  highly advisable to set __cache_hash_code to true.
+   *
+   *  The container iterators are simply built from nodes. This way
+   *  incrementing the iterator is perfectly efficient independent of
+   *  how many empty buckets there are in the container.
+   *
+   *  On insert we compute the element's hash code and use it to find the
+   *  bucket index. If the element must be inserted in an empty bucket
+   *  we add it at the beginning of the singly linked list and make the
+   *  bucket point to _M_before_begin. The bucket that used to point to
+   *  _M_before_begin, if any, is updated to point to its new before
+   *  begin node.
+   *
+   *  Note that all equivalent values, if any, are next to each other, if
+   *  we find a non-equivalent value after an equivalent one it means that
+   *  we won't find any new equivalent value.
+   *
+   *  On erase, the simple iterator design requires using the hash
+   *  functor to get the index of the bucket to update. For this
+   *  reason, when __cache_hash_code is set to false the hash functor must
+   *  not throw and this is enforced by a static assertion.
+   *
+   *  Functionality is implemented by decomposition into base classes,
+   *  where the derived _Hashtable class is used in _Map_base,
+   *  _Insert, _Rehash_base, and _Equality base classes to access the
+   *  "this" pointer. _Hashtable_base is used in the base classes as a
+   *  non-recursive, fully-completed-type so that detailed nested type
+   *  information, such as iterator type and node type, can be
+   *  used. This is similar to the "Curiously Recurring Template
+   *  Pattern" (CRTP) technique, but uses a reconstructed, not
+   *  explicitly passed, template pattern.
+   *
+   *  Base class templates are: 
+   *    - __detail::_Hashtable_base
+   *    - __detail::_Map_base
+   *    - __detail::_Insert
+   *    - __detail::_Rehash_base
+   *    - __detail::_Equality
+   */
+
+
+
+/*
+
+libstdc++의 해시 테이블은
+
+버킷 배열(인덱스 = 해시 % bucket_count) +
+
+모든 노드를 한 줄로 잇는 전역 단일 연결 리스트
+
+를 동시에 갖고 있어.
+
+전역 리스트: 컨테이너에 들어있는 모든 노드가 한 줄로 이어짐. 반복자 증가(++it)는 이 리스트만 따라가서 항상 일정한 비용이야.
+버킷 배열: 각 버킷 엔트리는 “그 버킷 첫 노드의 직전 노드(before-node)”를 가리킴. 그래서 삽입/삭제를 insert_after / erase_after로 빠르게 할 수 있어.
+
+*/
+
+
+
+
+
+
+   /*
+   
+unordered_map / unordered_set / (unordered_)multimap / (unordered_)multiset이 내부에서 쓰는 libstdc++ 해시테이블(_Hashtable) 구현을, 
+실전에서 알아두면 좋은 포인트 위주로 압축 정리해줄게. 마지막에 충돌 처리도 명확히 답함.
+
+핵심 구조(메모리/버킷/노드)
+
+노드 기반 단일 연결 리스트 + 버킷 배열: 요소들은 forward_list처럼 단일 연결 리스트에 쭉 이어져 있고, 
+버킷 테이블은 각 버킷의 “before-begin 노드”를 가리키는 포인터(혹은 null)를 저장함. 비어 있지 않은 버킷은 실제 첫 원소가 아니라 
+**그 앞 노드(=컨테이너 공용 sentinel _M_before_begin 또는 버킷별 ‘그 앞 노드’)**를 가리키고, 실제 첫 노드는 그 포인터의 next로 접근함. 
+버킷 포인터 자체는 역참조 금지(항상 next를 통해서만).
+
+왜 이렇게? 삽입/삭제를 forward_list::insert_after / erase_after처럼 구현하기 위해서. 
+이렇게 하면 빈 버킷이 많아도 이터레이터 증가가 일정하게 빠르고, 전체 리스트의 앞뒤 연결만 만지면 삽입/삭제가 단순해진다.
+
+**컨테이너 반복자(iterator)**는 노드만 따라 감: 증가 연산은 “현재 노드 → 다음 노드”로 진행. 버킷이 얼마나 비었든 이터레이터 인크리먼트 비용은 일정.
+
+테이블 상태 멤버: 버킷 배열 포인터, 버킷 개수, 전역 sentinel _M_before_begin, 요소 개수, 
+재해시 정책 객체 등이 핵심 상태. 초기엔 ‘단일 버킷’ 최적화로 1개 버킷/비할당 상태를 쓸 수 있음.
+
+삽입/탐색/삭제의 감각
+
+삽입: 키 해시 → 버킷 인덱스 →
+
+버킷이 비어 있으면 해당 버킷을 sentinel로 세팅하고 전체 리스트 머리에 노드를 끼워 넣음(그리고 이전 begin 버킷 보정).
+
+버킷이 차 있으면 그 버킷의 sentinel 뒤에 insert-after.
+이 패턴이 충돌 체이닝의 기본.
+
+탐색: 작은 크기(소수 임계값)일 때는 전역 리스트 선형 탐색 최적화를 타기도 하고, 
+보통은 해시→버킷으로 가서 해당 버킷 체인만 선형 스캔.
+
+삭제: 단일연결이라 이전 노드(prev)를 알아야 erase_after가 가능. 
+구현은 버킷 갱신을 위해 버킷 인덱스를 다시 계산하는 경로를 포함(해시 재계산이 던지면 안 되도록 조건을 강제).
+
+충돌 처리(체이닝?)
+
+네, 별도의 체인(노드 링크)로 이어 붙이는 “separate chaining” 방식을 사용. 
+같은 버킷의 노드들은 단일 연결로 이어짐. 동등 키들이 연속으로 모이도록 유지하는 규약도 갖고 있어 multimap/multiset류에서 equal_range가 잘 동작한다.
+
+equal_range / 동등 키 구간
+
+동등(=같은 해시·같은 키 비교 결과 참)인 값들은 인접하게 유지된다. 
+그래서 equal_range(k)가 **“그 키의 모든 노드 구간 [first,last)”**을 안정적으로 돌려줄 수 있음(정렬은 없지만 구간으로 묶임).
+
+Rehash(재해시)/로드 팩터
+
+로드 팩터 = size / bucket_count. 정책 객체가 버킷 수 증가 시점과 목표 버킷 수를 정함. 
+rehash(n)은 새 버킷 배열을 만들고 모든 노드를 새 버킷에 재배치한다.
+
+unique-key 컨테이너(unordered_map/set)는 재배치 시 버킷별 머리/앞삽입으로 간단히 옮김.
+
+multi 컨테이너(unordered_multimap/set)는 동등 키들의 상대 순서를 보존하도록, 
+같은 버킷에서 직전에 들어간 노드 뒤에 이어 붙이는 특수 경로가 있다(구간 내 상대 순서 유지). 필요 시 “다음 버킷의 sentinel 보정”까지 한다.
+
+해시/버킷 인덱스 계산 & 성능 트릭
+
+버킷 인덱스 계산은 해시코드 + range-hash(mod 비슷한 것)로 산출. 
+구현은 해시코드 캐시 옵션을 지원해서, 노드별로 해시값을 저장해두면 지우기/재배치 때 해시 재계산을 피할 수 있어 강하게 권장됨.
+
+작은 크기 최적 경로: 요소가 매우 적으면 버킷을 안 보고 전역 리스트 선형 탐색이 더 빠를 수 있다고 보고 그 경로를 탄다(분기 임계값은 traits로 결정).
+
+이터레이터/지역 반복자(local_iterator)
+
+컨테이너 반복자는 전역 리스트 순서로 순회. 증가 비용 일정.
+
+**버킷별 반복자(local_iterator)**도 제공: 특정 버킷에 대한 [begin(b), end(b)) 범위를 순회. 
+내부적으로는 해당 버킷의 체인에서 버킷 경계(해시 재검사)로 걸러 진행한다(버킷 포인터가 sentinel을 가리키므로 next로만 진입).
+
+복잡도 감각(평균/최악)
+
+평균: 좋은 해시와 적절한 로드 팩터면 find/insert/erase가 평균 O(1).
+
+최악: 충돌이 한 버킷에 몰리면 O(N) (단일 연결 리스트 스캔).
+
+rehash: 호출 시 O(N) 재배치.
+
+정리: 질문의 핵심 답
+
+“해시 충돌 시 체이닝 계속 이어붙이나?” → 예.
+각 버킷은 단일 연결 체인으로 충돌 원소를 관리하고, 비어 있지 않은 버킷은 그 체인의 ‘앞 노드’를 버킷에 저장해 insert_after/erase_after로 다룸. 
+multi 컨테이너는 동등 키의 상대 순서를 보존하는 특수 경로까지 갖춘다.
+
+원리만 확 잡고 가면 튜닝 포인트도 보임: 해시 함수 품질, max_load_factor/rehash 튜닝, 
+해시코드 캐시 옵션을 신경 쓰면 충돌 체인 길이를 관리하면서 평균 O(1)을 유지할 수 있어.
+   
+   */

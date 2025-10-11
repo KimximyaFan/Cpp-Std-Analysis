@@ -1,0 +1,431 @@
+/**
+ *  @brief A standard container made up of (key,value) pairs, which can be
+ *  retrieved based on a key, in logarithmic time.
+ *
+ *  @ingroup associative_containers
+ *  @headerfile map
+ *  @since C++98
+ *
+ *  @tparam _Key  Type of key objects.
+ *  @tparam  _Tp  Type of mapped objects.
+ *  @tparam _Compare  Comparison function object type, defaults to less<_Key>.
+ *  @tparam _Alloc  Allocator type, defaults to
+ *                  allocator<pair<const _Key, _Tp>.
+ *
+ *  Meets the requirements of a <a href="tables.html#65">container</a>, a
+ *  <a href="tables.html#66">reversible container</a>, and an
+ *  <a href="tables.html#69">associative container</a> (using unique keys).
+ *  For a @c map<Key,T> the key_type is Key, the mapped_type is T, and the
+ *  value_type is std::pair<const Key,T>.
+ *
+ *  Maps support bidirectional iterators.
+ *
+ *  The private tree data is declared exactly the same way for map and
+ *  multimap; the distinction is made entirely in how the tree functions are
+ *  called (*_unique versus *_equal, same as the standard).
+*/
+
+/*
+
+조회·접근
+at(const Key& k)
+
+무엇: 키 k의 값을 범위 체크하며 참조로 반환. 없으면 std::out_of_range 예외.
+
+복잡도: O(log N)
+
+언제/왜: “없으면 예외”가 필요한 안전 접근.
+
+예시
+
+std::map<std::string,int> m{{"hp", 100}};
+int& v = m.at("hp");   // 100
+// m.at("mp"); // throws std::out_of_range
+
+operator[](const Key& k) / operator[](Key&& k)
+
+무엇: 키 k의 값을 참조로 반환. 없으면 (디폴트 생성으로) 새 노드 삽입 후 참조 반환.
+
+복잡도: O(log N) (+ 값 타입의 디폴트 생성 비용)
+
+주의: 의도치 않은 삽입 부작용이 생길 수 있음.
+
+예시
+
+m["hp"] += 10;        // 없으면 0으로 생성 후 +10
+
+find(const Key& k)
+
+무엇: k가 있으면 그 원소를 가리키는 iterator, 없으면 end().
+
+복잡도: O(log N)
+
+예시
+
+if (auto it = m.find("hp"); it != m.end()) {}
+
+count(const Key& k)
+
+무엇: std::map은 중복 키가 없으므로 0 또는 1.
+
+복잡도: O(log N)
+
+lower_bound(const Key& k) / upper_bound(const Key& k) / equal_range(const Key& k)
+
+무엇:
+
+lower_bound: k 이상(≥) 최초 위치.
+
+upper_bound: k 초과(>) 최초 위치.
+
+equal_range: {lower_bound(k), upper_bound(k)}
+
+복잡도: 모두 O(log N)
+
+예시(구간 제거):
+
+auto [L, R] = m.equal_range("apple");
+m.erase(L, R); // "apple" 키 구간 제거 (map에선 0/1개지만 패턴 유용)
+
+at, operator[] 차이 요약
+
+at: 없으면 예외, 삽입 안 함
+
+[]: 없으면 삽입(디폴트 생성)
+
+순회
+begin() / end() / cbegin() / cend()
+
+무엇: 정렬 순서의 처음/끝 이터레이터(상수 버전은 c*).
+
+복잡도: 모두 O(1)
+
+비고: begin()은 트리의 최솟값 노드 가리킴.
+
+crbegin() / crend() / rend()
+
+무엇: 역방향 상수 이터레이터 시작/끝, 역방향 끝(rend).
+
+복잡도: O(1)
+
+예시
+
+for (auto it = m.crbegin(); it != m.crend(); ++it) {
+  // 큰 키 → 작은 키
+}
+
+삽입·갱신
+insert(...)
+
+무엇: 새 원소 삽입(중복 키면 삽입 실패).
+
+오버로드: 단일 값, 힌트 포함, 범위/initializer_list
+
+복잡도:
+
+일반: O(log N)
+
+힌트 버전: 힌트가 정확하면 평균 O(1), 아니면 O(log N)
+
+정렬된 범위 삽입은 선형에 가깝게 들어갈 수 있음
+
+반환: (단일) {iterator, bool} 또는 iterator (C++17 이후)
+
+예시
+
+m.insert({"atk", 50});               // {it, inserted}
+m.insert(m.end(), {"def", 10});      // hint (맞으면 빠름)
+
+emplace(...) / emplace_hint(pos, ...)
+
+무엇: 제자리 생성으로 불필요한 복사/이동 줄임.
+
+복잡도: insert와 동일(힌트 정확시 평균 O(1))
+
+예시
+
+m.emplace("name", 1);                 // pair<const Key,T>를 제자리 생성
+m.emplace_hint(m.end(), "type", 2);
+
+insert_or_assign(k, obj) (C++17)
+
+무엇: 키가 없으면 삽입, 있으면 mapped에 대입(교체).
+
+복잡도: O(log N)
+
+예시
+
+m.insert_or_assign("hp", 120); // 없으면 삽입, 있으면 값만 교체
+
+try_emplace(k, args...) (C++17)
+
+무엇: 키가 없을 때만 mapped를 제자리 생성. 있으면 아무것도 안 함(생성 인자 평가도 피함).
+
+복잡도: O(log N)
+
+언제/왜: 값 생성 비용이 크거나, 생성 자체를 피하고 싶을 때.
+
+예시
+
+m.try_emplace("big", HeavyCtor(args...)); // 있으면 HeavyCtor 아예 호출 안 됨
+
+삭제·추출·병합
+erase(const Key& k) / erase(iterator pos) / erase(iterator first, iterator last)
+
+무엇: 원소 삭제.
+
+복잡도:
+
+erase(key): O(log N)
+
+erase(it): amortized O(1)
+
+erase(first,last): O(거리) (구간 길이에 선형)
+
+이터레이터 무효화 규칙: 지운 원소만 무효화, 나머지는 유지(트리 재균형과 무관).
+
+extract(const Key& k) / extract(iterator pos) (C++17)
+
+무엇: 노드를 컨테이너 밖으로 분리하여 node_type으로 반환(그 노드의 소유권 이동).
+
+복잡도:
+
+by key: O(log N) (찾는 비용)
+
+by iterator: amortized O(1)
+
+예시
+
+auto nh = m.extract("hp");
+if (nh) {
+  nh.key() = "HP";           // 키 수정 가능 (node_type 상태에선)
+  m.insert(std::move(nh));   // 다시 삽입
+}
+
+merge(map& other) (C++17)
+
+무엇: other에서 겹치지 않는 키의 노드를 비용 효율적으로 현재 map으로 이동.
+
+복잡도: other의 각 노드에 대해 평균 O(log (N + M)) (트리 삽입 비용)
+⇒ 대략 O(k log (N + k)) (k는 실제 이동된 노드 수)
+
+예시
+
+std::map<std::string,int> a{{"a",1}}, b{{"b",2}};
+a.merge(b); // b의 "b"가 a로 이동, 중복 키는 남음
+
+크기·상태
+size() / empty() / max_size()
+
+무엇: 요소 개수 / 비었는지 / 이론적 최대 크기
+
+복잡도: 모두 O(1)
+
+clear()
+
+무엇: 모든 원소 삭제
+
+복잡도: O(N)
+
+swap(map& other)
+
+무엇: 두 컨테이너 내용을 맞바꿈
+
+복잡도: O(1) (노드 포인터/루트 교체 수준)
+
+주의: 비교자/할당자 호환성 세부 규칙은 구현·표준 버전에 따름.
+
+비교자·할당자
+key_comp() const
+
+무엇: 키 비교자(기본 std::less<Key>)를 반환.
+
+복잡도: O(1)
+
+예시
+
+auto cmp = m.key_comp();
+bool ordered = cmp("a", "b"); // true
+
+value_comp() const
+
+무엇: pair<const Key,T> 두 개를 비교할 때 first(키)만 비교하는 함수객체를 반환.
+즉, 내부적으로 key_comp()(a.first, b.first).
+
+복잡도: O(1)
+
+get_allocator() const
+
+무엇: 사용 중인 할당자 객체 반환.
+
+복잡도: O(1)
+
+기타
+equal_range(const Key& k) (위에 설명)
+
+구간 [lower_bound(k), upper_bound(k)) 반환, pair<iterator, iterator>.
+
+end() / rend() (위에 설명)
+
+끝/역끝 이터레이터. O(1).
+
+operator=(...)
+
+무엇: 복사/이동/initializer_list 대입.
+
+복잡도:
+
+복사 대입: O(N) (노드 복제)
+
+이동 대입: O(1) (포인터 갈아끼움 수준)
+
+initializer_list: 리스트 크기만큼 삽입 ⇒ 평균 O(K log (N+K))
+
+“헷갈리기 쉬운 3종 세트” 요약
+
+operator[]: 없으면 삽입(디폴트 생성) + 참조. 안전하지만 부작용 존재.
+
+at: 없으면 예외. 부작용 없음.
+
+find: 없으면 end(). 예외/삽입 없음. 존재 확인 용으로 가장 무난.
+
+작은 활용 예 모음
+존재하면 갱신, 없으면 삽입
+if (auto it = m.find("hp"); it != m.end()) it->second += 10;
+else                                       m.emplace("hp", 10);
+
+부작용 없이 읽기(없으면 넘어가기)
+if (auto it = m.find("name"); it != m.end())
+  std::cout << it->second;
+
+성능 의식: 힌트로 연속 삽입
+std::map<int,int> m;
+auto hint = m.end();
+for (int k : sorted_keys) {
+  hint = m.emplace_hint(hint, k, compute(k)); // 거의 O(1)씩 삽입
+}
+
+값 생성 비용이 클 때
+m.try_emplace("blob_id", ExpensiveToBuild()); // 이미 있으면 생성 안 됨
+
+노드 추출해 키 수정 후 재삽입
+auto nh = m.extract("user");
+if (nh) {
+  nh.key() = "User";          // node_type에서만 키 수정 가능
+  m.insert(std::move(nh));
+}
+
+*/
+
+
+/*
+
+아니요. std::out_of_range가 던져지고(c++ 예외) 그걸 잡지 않으면 프로그램이 즉시 종료됩니다. 하지만 try/catch로 잡으면 종료되지 않고 정상적으로 처리(로그, 대체 로직 등)할 수 있어요.
+
+어떻게 동작하나?
+
+예외 발생
+map.at(k), vector::at(i), string::at(i) 같은 “범위 체크” 함수는 범위를 벗어나면 std::out_of_range를 throw 합니다.
+
+스택 언와인딩
+해당 예외를 처리할 catch를 찾으면서 호출 스택을 거슬러 올라가고, 그 과정에서 이미 생성된 자동(스택) 객체의 소멸자는 호출됩니다(RAII 정리).
+
+못 잡으면 종료
+어느 지점에서도 catch되지 않으면 **std::terminate()**가 호출되어 프로세스가 종료됩니다. (운영체제 차원에서 자원은 회수되지만, 더 이상 사용자 코드가 실행되진 않아요.)
+
+예외가 noexcept 함수 밖으로 나가면
+그 자체로 규약 위반이라 즉시 std::terminate() 입니다
+
+*/
+
+/*
+
+무엇을 묻는 건가?
+
+std::map<Key, T, Compare>에서 정렬 기준은 Compare(기본은 std::less<Key>).
+
+std::map::value_compare는 std::map 안에 있는 중첩 비교자로, value_type(= std::pair<const Key, T>) 두 개를 비교할 때 키만 비교하도록 정의돼 있음.
+
+즉, value_compare(x, y)는 내부적으로 **key_comp()(x.first, y.first)**를 호출하고, 기본 비교자라면 곧 **std::less<Key>()(x.first, y.first)**와 같다는 뜻이야.
+→ 한 줄 요약: “pair 전체가 아니라 first만 보고 < 비교한다”.
+
+각각 자세히
+1) std::less<Key>
+
+함수 객체(functor)로, a < b를 평가해서 bool을 돌려줘.
+
+기본 Compare가 std::less<Key>이므로, std::map은 키의 operator< 로 정렬돼.
+
+요구사항: 이 비교는 strict weak ordering(반사성 X, 추이성, 비대칭성, 삼항관계의 추이성)을 만족해야 함. 그래야 트리 불변식과 알고리즘이 깨지지 않아.
+
+std::less<int> less;
+bool r = less(3, 5); // true  (3 < 5)
+
+2) value_compare
+
+타입은 보통 struct value_compare { bool operator()(const value_type& a, const value_type& b) const { return comp(a.first, b.first); } Compare comp; }; 같은 형태(표준적으로는 구현 세부가 다를 수 있지만 의미는 동일).
+
+즉, map의 요소 타입(pair<const Key, T>)끼리 비교해야 할 때, T는 완전히 무시되고 first(Key)만 비교한다.
+
+이것 덕분에 std::map은 “키 정렬 컨테이너”라는 속성을 확실히 지켜.
+
+std::map<std::string, int> m;
+auto vc = m.value_comp();  // value_compare 받기
+std::pair<const std::string, int> a{"apple", 1};
+std::pair<const std::string, int> b{"banana", 9};
+bool ordered = vc(a, b);   // 내부적으로 m.key_comp()("apple", "banana")
+                           // 즉 std::less<std::string>()("apple","banana")
+
+*/
+
+
+/*
+
+std::map 구현 요약 (libstdc++)
+
+기반 자료구조
+내부적으로 레드-블랙 트리(_Rb_tree) 위에 얹은 래퍼. 실제 멤버는 _Rep_type _M_t; 로 보관됨. 키 정렬과 모든 탐색/삽입/삭제가 이 트리 연산으로 동작.
+
+키/값 타입
+value_type = std::pair<const Key, T> 고정(키는 const). 비교자는 기본 std::less<Key> 를 사용하고, value_compare 는 (x.first < y.first) 로 위임.
+
+이터레이터
+정렬 순서(오름차순)로 순회하는 양방향 이터레이터 제공: begin/end, rbegin/rend, cbegin/....
+
+복잡도(주요 연산)
+find / lower_bound / upper_bound / insert / erase(key) 등 핵심 연산은 트리 기반 O(log N). (헤더 주석과 함수 설계가 이를 전제)
+
+요소 접근
+operator
+ : 키가 없으면 노드 생성 + mapped_type 기본생성 후 참조를 반환. (디폴트 생성 가능 요건 확인 코드 포함)
+at(key) : 없으면 std::out_of_range 던짐.
+
+삽입 계열(현대 C++ 기능 포함)
+emplace, emplace_hint : 노드 제자리 생성. 힌트는 맞으면 삽입 비용 개선 가능.
+
+C++17: try_emplace(k, args...)(있으면 생성 안 함), 노드 핸들 extract/insert(node_type) 지원, 컨테이너 간 merge 지원(map↔map/multimap).
+
+C++17: insert_or_assign(k, obj)(없으면 삽입, 있으면 second 대입). 힌트 오버로드도 제공.
+
+범위/리스트 삽입은 이미 정렬된 범위면 선형 시간(그 외 N log N).
+
+탐색/범위 쿼리
+find, count(map에서는 0/1), lower_bound, upper_bound, equal_range 제공.
+
+이종 키(heterogeneous lookup): 비교자가 투명(is_transparent)하면 find/lower_bound/... 가 임의의 키 타입 _Kt 로 오버로드되어 불필요한 키 변환 없이 검색. 헤더에 _M_find_tr/_M_lower_bound_tr 등 경로가 분기됨.
+
+C++20: contains(key) 추가.
+
+지우기/스왑/정리
+erase(iterator), erase(key), erase(first,last) 모두 제공(현대 표준에 맞춰 iterator 반환형 오버로드 포함). clear(), swap() 제공.
+
+할당자와 타입 제약
+allocator<pair<const Key, T>> 를 기반으로 한 재바인딩 _Pair_alloc_type 사용. C++17 이상에서 할당자 value_type 일치 정적 단언 포함. 다양한 생성자/할당자가 allocator-extended 버전을 제공.
+
+정렬/비교자 관찰자
+key_comp()로 키 비교자 반환, value_comp()는 키 비교자에서 래핑 생성.
+
+연산자와 비교
+==, < (또는 C++20의 <=>) 등 비교 연산자 제공. 사전식(lexicographical) 비교 규칙.
+
+*/

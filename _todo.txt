@@ -1,20 +1,5 @@
-string
-array
 
-unordered_map
-map
-unordered_set
-set
 
-stack
-queue
-deque
-priority_queue
-pair
-tuple
-
-unique_pointer
-shared_pointer
 
 1) 진짜 자주 쓰이는 핵심 20% (사실상 필수)
 

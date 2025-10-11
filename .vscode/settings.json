@@ -57,7 +57,9 @@
     "condition_variable": "cpp",
     "ratio": "cpp",
     "semaphore": "cpp",
-    "shared_mutex": "cpp"
+    "shared_mutex": "cpp",
+    "stack": "cpp",
+    "unordered_set": "cpp"
   },
 
   "C_Cpp.default.includePath": [

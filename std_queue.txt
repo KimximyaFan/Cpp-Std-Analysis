@@ -1,0 +1,99 @@
+/**
+ *  @brief  A standard container giving FIFO behavior.
+ *
+ *  @ingroup sequences
+ *
+ *  @tparam _Tp  Type of element.
+ *  @tparam _Sequence  Type of underlying sequence, defaults to deque<_Tp>.
+ *
+ *  Meets many of the requirements of a
+ *  <a href="tables.html#65">container</a>,
+ *  but does not define anything to do with iterators.  Very few of the
+ *  other standard container interfaces are defined.
+ *
+ *  This is not a true container, but an @e adaptor.  It holds another
+ *  container, and provides a wrapper interface to that container.  The
+ *  wrapper is what enforces strict first-in-first-out %queue behavior.
+ *
+ *  The second template parameter defines the type of the underlying
+ *  sequence/container.  It defaults to std::deque, but it can be any type
+ *  that supports @c front, @c back, @c push_back, and @c pop_front,
+ *  such as std::list or an appropriate user-defined type.
+ *
+ *  Members not found in @a normal containers are @c container_type,
+ *  which is a typedef for the second Sequence parameter, and @c push and
+ *  @c pop, which are standard %queue/FIFO operations.
+ */
+
+/*
+
+std::queue<T, Sequence = deque<T>>
+
+어댑터(adaptor): 진짜 컨테이너가 아니라 기저 컨테이너(c)를 감싼 래퍼. 기본은 deque<T>. 기저는 front, back, push_back, pop_front 를 제공해야 함. 이터레이터를 노출하지 않음.
+
+보호 멤버 c: 표준에 의해 이름/가시성이 지정된 protected 멤버(파생 허용 목적의 역사적 사유).
+
+주요 멤버/타입: value_type, reference, const_reference, size_type, container_type(= Sequence).
+
+연산
+
+관찰: empty(), size(), front(), back() — 디버그 모드에서 비어있지 않은지 사전조건 체크.
+
+수정: push(const T&) → c.push_back, push(T&&)(C++11), emplace(args...)(C++11; C++17 이후 결과를 decltype(auto)로 전달, 내부적으로 c.emplace_back), pop() → c.pop_front().
+
+swap(queue&) 제공(조건부 noexcept).
+
+생성자
+
+기본/복사/이동/할당자(allocator) 확장 생성자 다수(C++11+).
+
+일부 환경(C++23 표준 어댑터 확장 매크로 활성 시)에서 이터레이터 구간 생성자 지원.
+
+C++17 유추 가이드(deduction guides) 제공.
+
+비교 연산자: ==, !=, <, <=, >, >= 모두 기저 컨테이너 c 비교에 위임. C++20 환경이면 <=>도 제공.
+
+예외/복잡도: 각 연산의 복잡도는 기저 컨테이너에 의존(예: 기본 deque라면 끝단 삽입/삭제 평균 O(1)).
+
+std::priority_queue<T, Sequence = vector<T>, Compare = less<T>>
+
+어댑터 + 힙 유지: 내부 c와 비교자 comp 보유. 기본 기저는 vector<T>(임의 접근 필요). 컨테이너는 랜덤 액세스 이터레이터·push_back·pop_back·front를 지원해야 함.
+
+힙 불변식 관리
+
+생성 시 std::make_heap(c.begin(), c.end(), comp)로 힙 구성.
+
+push(x)/emplace(args...): c.push_back / c.emplace_back 후 std::push_heap(...).
+
+pop(): std::pop_heap(...) 후 c.pop_back().
+
+따라서 top()은 항상 c.front()(O(1)).
+
+연산/타입
+
+관찰: empty(), size(), top()(사전조건 검사 포함).
+
+수정: push(const T&), push(T&&), emplace(...), pop(), swap(...)(컨테이너와 비교자 모두 스왑).
+
+value_compare 별칭(= Compare) 제공.
+
+생성자
+
+비교자/시퀀스/할당자 조합, 이터레이터 구간 생성자 포함(필요 시 make_heap 호출).
+
+C++17 유추 가이드 제공.
+
+비교 연산자 없음: priority_queue는 ==, < 등 동등/순서 비교 연산자를 제공하지 않음(디자인 상의 결정).
+
+복잡도: top() O(1), push/pop O(log n), make_heap O(n).
+(주의) 어댑터 외부 경로로 요소 값을 바꾸면 힙 불변식이 깨져도 자동 재정렬되지 않음.
+
+공통 구현 포인트
+
+uses_allocator 특성 지원: 어댑터가 기저 컨테이너의 할당자 사용 여부를 계승.
+
+swap 자유함수 오버로드: 조건 제약 하에 noexcept 전파.
+
+디버그 가드: 비어있는 컨테이너에서 front/top/back 등을 호출하면 디버그 환경에서 사전조건 매크로로 점검.
+
+*/

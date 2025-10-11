@@ -1,0 +1,96 @@
+/**
+ *  @brief  A standard container giving FILO behavior.
+ *
+ *  @ingroup sequences
+ *
+ *  @tparam _Tp  Type of element.
+ *  @tparam _Sequence  Type of underlying sequence, defaults to deque<_Tp>.
+ *
+ *  Meets many of the requirements of a
+ *  <a href="tables.html#65">container</a>,
+ *  but does not define anything to do with iterators.  Very few of the
+ *  other standard container interfaces are defined.
+ *
+ *  This is not a true container, but an @e adaptor.  It holds
+ *  another container, and provides a wrapper interface to that
+ *  container.  The wrapper is what enforces strict
+ *  first-in-last-out %stack behavior.
+ *
+ *  The second template parameter defines the type of the underlying
+ *  sequence/container.  It defaults to std::deque, but it can be
+ *  any type that supports @c back, @c push_back, and @c pop_back,
+ *  such as std::list, std::vector, or an appropriate user-defined
+ *  type.
+ *
+ *  Members not found in @a normal containers are @c container_type,
+ *  which is a typedef for the second Sequence parameter, and @c
+ *  push, @c pop, and @c top, which are standard %stack/FILO
+ *  operations.
+ */
+
+
+/*
+
+다음은 libstdc++의 std::stack 소스(내장 헤더 bits/stl_stack.h)를 기준으로 설명입니다.
+
+_Sequence 가 뭔가요?
+
+std::stack은 “컨테이너 어댑터”입니다. 즉, 진짜 저장소를 직접 구현하지 않고 기저 컨테이너를 하나 감싸서 FILO(First-In Last-Out) 인터페이스만 노출합니다. 
+이때 기저 컨테이너의 타입을 템플릿 두 번째 인자 _Sequence 로 받습니다.
+
+기본값은 deque<_Tp> 이고, back / push_back / pop_back 을 제공하는 어떤 컨테이너라도 사용할 수 있습니다(예: std::vector, std::list, 사용자 정의 컨테이너). 
+또한 container_type 별칭으로 _Sequence를 그대로 노출합니다.
+
+메모리는 정적인가? 동적인가?
+
+std::stack 자체는 메모리를 직접 관리하지 않습니다. 모든 메모리 관리(할당·해제, 성장 전략)는 _Sequence 가 담당합니다. 
+따라서 “정적/동적”은 선택한 _Sequence에 달려 있습니다. 일반적으로는 동적(힙) 할당입니다.
+
+기본 deque: 덩어리(chunk) 단위의 동적 블록 할당으로 끝/뒤쪽에 O(1)로 밀어넣기 좋음.
+
+vector: 연속 메모리를 동적 재할당으로 키움(가끔 재할당이 발생).
+
+list: 각 노드가 개별 동적 할당됨(연속 아님).
+
+표준만 놓고 보면 std::stack에 정적 용량 개념은 없습니다. 다만 사용자가 “고정 용량”을 가진 커스텀 컨테이너(예: ring buffer)를 
+_Sequence로 넘기면 사실상 정적으로 운용할 수도 있습니다. 핵심은: std::stack은 어댑터일 뿐, 메모리 정책은 _Sequence가 결정합니다.
+
+구현적 특징 요약
+
+컨테이너 어댑터: “진짜 컨테이너”가 아니라 래퍼. 이터레이터를 제공하지 않음(의도적으로 스택 인터페이스만).
+
+핵심 멤버: 보호 멤버 c 가 바로 기저 컨테이너(_Sequence). 모든 연산은 c에 위임.
+
+top() → c.back()
+
+push(x) → c.push_back(x) / rvalue 오버로드 지원
+
+emplace(args...) → c.emplace_back(args...)
+
+pop() → c.pop_back()
+
+empty(), size() → 그대로 위임
+
+swap() → 기저 컨테이너와 스왑(조건부 noexcept)
+이러한 연산들의 시간 복잡도는 전적으로 _Sequence에 따름. 예를 들어 기본 deque면 push/pop/top이 상수 시간(O(1)) 기대.
+
+요구 조건(제약): _Sequence는 value_type이 _Tp와 같아야 하고(C++17 static_assert), back/push_back/pop_back 을 제공해야 합니다.
+
+생성자 세트(allocator-aware): 기본/복사/이동/할당자 연동 생성자와(필요 시) 반복자 구간 생성자(C++23 환경에서 어댑터용) 및 클래스 템플릿 연역 가이드(CTAD) 제공.
+
+비교 연산자: ==, <(및 파생 비교)와 C++20의 <=> 가 기저 컨테이너의 비교 로 정의됩니다. 즉 스택의 내용 비교는 결국 c의 비교.
+
+디버그 전제조건 검사: top()과 pop() 전에 비어있지 않음을 요구하는 내부 체크가 들어가 있습니다(디버그 구성에서 유효).
+
+복잡도(기저 컨테이너별 감)
+
+_Sequence = deque(기본): push/pop/top 암묵적 상수 시간(아주 드물게 재할당 유사 비용), 메모리는 비연속 블록.
+
+_Sequence = vector: push_back 평균 암묵적 상수, 하지만 재할당 시 O(n); pop_back O(1); 연속 메모리라 캐시 친화적.
+
+_Sequence = list: push_back/pop_back 진짜 상수 시간, 연속성 없음(노드별 할당), 캐시 지역성은 불리.
+
+핵심 정리: std::stack<T, _Sequence>는 오직 “스택 인터페이스”만 보장하고, 성능/메모리 특성은 _Sequence가 결정합니다. 
+기본값 deque는 일반적 스택 용도에 무난한 상수 시간 push/pop과 예측 가능한 동적 메모리 성장을 제공합니다.
+
+*/

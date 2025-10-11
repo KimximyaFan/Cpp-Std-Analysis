@@ -1,0 +1,299 @@
+/**
+ *  @class basic_string basic_string.h <string>
+ *  @brief  Managing sequences of characters and character-like objects.
+ *
+ *  @ingroup strings
+ *  @ingroup sequences
+ *  @headerfile string
+ *  @since C++98
+ *
+ *  @tparam _CharT  Type of character
+ *  @tparam _Traits  Traits for character type, defaults to
+ *                   char_traits<_CharT>.
+ *  @tparam _Alloc  Allocator type, defaults to allocator<_CharT>.
+ *
+ *  Meets the requirements of a <a href="tables.html#65">container</a>, a
+ *  <a href="tables.html#66">reversible container</a>, and a
+ *  <a href="tables.html#67">sequence</a>.  Of the
+ *  <a href="tables.html#68">optional sequence requirements</a>, only
+ *  @c push_back, @c at, and @c %array access are supported.
+    
+
+    기본 생성
+    std::string s;                // 빈 문자열
+    std::string s2{};             // 동일 (value-init)
+
+    리터럴/포인터에서
+    std::string a = "hello";      // 가장 흔함 (복사 초기화)
+    std::string b("hello");       // 직접 초기화
+    const char* p = "hello";
+    std::string c(p);             // NUL('\0') 만날 때까지 복사
+
+    길이 지정 (내부에 '\0' 포함 가능)
+    std::string d(p, 3);          // p[0..2]만 복사 → "hel"
+    std::string e("\0abc", 4);    // NUL 포함한 바이너리 데이터도 OK: {'\0','a','b','c'}
+
+    반복 채우기(필러) / 초기 용량 확보
+    std::string f(10, 'x');       // "xxxxxxxxxx"  (count, char)  ⬅︎ 자주 씀
+    std::string big; big.reserve(100000); // 대량 append 전에 용량 확보
+
+    부분 문자열/슬라이스
+    std::string g = "abcdef";
+    std::string h(g, 2, 3);       // g[2]부터 3글자 → "cde"
+    std::string i = g.substr(2, 3); // 동일 효과
+
+    반복자 범위
+    std::vector<char> v = {'H','i','!'};
+    std::string j(v.begin(), v.end()); // "Hi!"
+
+    string_view에서 (C++17+)
+    std::string_view sv = "world";
+    std::string k(sv);            // 복사 생성
+
+    이어 붙이기(초기화와 동시에)
+    std::string path = std::string("C:/") + "Users/" + "name";
+    std::string m = "hello"s + " " + "world"; // using namespace std::string_literals;
+
+    원시 문자열 리터럴(백슬래시/따옴표 많은 문자열 편함)
+    std::string json = R"({"k":"v","arr":[1,2,3]})";
+
+    인코딩 리터럴에서 (유니코드)
+    using namespace std::string_literals;
+    std::u8string  u8 = u8"한글🙂";
+    std::u16string u16 = u"한글";
+    std::u32string u32 = U"한글";
+
+    이동(move)로 비용 줄이기
+    std::string make_big();
+    std::string x = make_big();   // RVO/NRVO로 보통 복사 없음
+    std::string y = std::move(x); // x의 버퍼를 y로 이동(이후 x는 빈 상태 또는 valid-but-empty)
+
+    초기화 리스트(주의 포인트)
+    using namespace std::string_literals;
+
+    // 이건 "ab"
+    std::string s1{'a','b'};        // initializer_list<char> 선택
+
+    // 이건 "xxxxxxxxxx" (10개)
+    std::string s2(10, 'x');        // (count, char) 생성자
+
+    // braces로 (10,'x') 쓰면 리스트 우선 규칙 때문에 혼동/에러 가능 → 괄호() 권장
+    // std::string s3{10, 'x'};     // 보통 컴파일 에러(축소 변환), 헷갈리니 피하자
+
+    파일/입력에서 한 번에
+    std::ifstream fin("file.bin", std::ios::binary);
+    std::string blob((std::istreambuf_iterator<char>(fin)), std::istreambuf_iterator<char>());
+
+    빠른 베스트 프랙티스
+
+    부분 길이 필요하면 (ptr,len)/substr/(iter,iter)를 써라. (char*가 NUL 포함 데이터면 반드시 길이 지정)
+
+    대량 append 예측되면 reserve() 먼저 → 재할당/복사 줄여 성능↑.
+
+    채우기 문자열은 (count, ch) 생성자가 가장 간결·빠름.
+
+    **brace 초기화 { }**는 initializer_list가 먼저 잡혀 헷갈리기 쉬움 → 문자열에선 **괄호 ( )**를 기본으로.
+
+    임시에서 받기는 보통 복사비용 없음(RVO); 그래도 명시적 std::move가 필요한 경우만 써라.
+
+    유니코드 리터럴은 u8/u/U 접두 사용. 플랫폼/문자폭에 따라 타입 다름에 유의
+
+    GCC/libstdc++ (대부분의 리눅스/MinGW): char 기준 최대 15글자까지 SSO (즉, 길이 ≤ 15면 힙 할당 없음). 
+    MSVC STL (Windows): char 기준 최대 15글자. 
+    Clang/libc++ (macOS 등 -stdlib=libc++): char 기준 약 22~23글자(버전/레아웃에 따라 보고가 갈림). 
+
+    wchar_t, char16_t 같은 더 큰 문자인코딩은 SSO 여유가 더 작아진다(동일 객체 크기 안에서 더 큰 문자 폭을 쓰기 때문). 일반 설명/측정 글들 참고. 
+    PVS-Studio
+
+    요약: MinGW-w64에서 네가 보는 libstdc++라면 15로 생각하면 된다
+
+
+    짧은 문자열 다루기: SSO 덕분에 동적 할당을 피함. 빈번한 임시/소규모 연결은 매우 싸다(단, 길이 임계점 넘는 순간 재배치 비용 발생).
+    append/push_back 패턴: 용량 초과 직전까지는 O(1) amortized. 초과 시 _M_mutate 경로로 재할당/이동이 터지므로, 예상 길이를 알면 사전 reserve()가 이득. 
+    널 종료 보장: data()[size()]에 항상 널을 써주므로 C API 연동이 안전(단, resize_and_overwrite처럼 로우레벨 API는 계약을 정확히 따라야 함).
+    할당자 전파 케이스: 서로 다른 할당자 간 대입은 로컬/비로컬 모두 고려한 느린 경로가 될 수 있음(불필요한 할당자 차이는 피하는 게 상책).
+
+    공통점 (vector와 유사한 점)
+
+    연속 저장: 문자들은 한 덩어리의 연속 메모리에 들어간다. (문자 복사/이동도 내부 유틸로 일괄 처리) 
+    capacity/size 모델 + 초과 시 재할당: push_back에서 size+1 > capacity면 내부 변이 루틴(_M_mutate)로 들어가 재할당/이동이 일어난다(아몰타이즈드 증가 패턴). 
+    생성·파괴 경로 분리: 동적 스토리지를 쓰는 경우 전용 destroy/deallocate 경로가 있고(용량+널 고려), 필요 시 새 용량으로 재구성한다. 
+    중요한 차이점 (string만의 규약/최적화)
+    널 종료 불변식
+    size()를 바꾸는 내부 훅이 항상 data()[size()]에 기본값(널)을 다시 써서 C-스트링 호환을 강제한다. 이건 벡터에는 없는 규약. 
+    SSO(Small String Optimization)
+    짧은 문자열은 힙을 안 쓰고 객체 안의 로컬 버퍼에 저장한다. 구현은
+    _S_local_capacity(대략 15/sizeof(CharT)) 크기의 _M_local_buf와,
+    힙을 쓰는 경우의 _M_allocated_capacity
+    를 union으로 공유한다. 현재 로컬/힙 상태는 _M_is_local()로 판정. 벡터에는 이 로컬 버퍼가 없다.
+    재할당 트리거와 변이 루틴
+    단순 증가뿐 아니라 삽입/치환/삭제가 모두 _M_mutate/_M_erase 같은 “문자열 전용 변이 경로”로 모인다. 
+    벡터도 내부에서 memmove를 하지만, string은 널 종료/traits 처리까지 함께 고려한다. 
+    할당자 전파/교체 시 로컬-힙 스위칭
+    복사 대입에서 할당자가 바뀌면, 짧은 경우 로컬 버퍼로 “되돌리고”, 
+    긴 경우 새로 allocate해서 바꿔 끼우는 분기가 있다. 벡터에도 할당자 이슈는 있지만, string은 SSO 상태 전환이 껴서 분기가 더 복잡해진다. 
+    문자 traits 기반 연산
+    복사/할당/비교가 char_traits 경유로 구현되어(예: _S_copy_chars, traits_type::assign) 
+    단순 바이트 배열 그 이상을 전제로 한다. 벡터는 요소 타입 일반화지만 문자열은 traits 전제로 최적화가 더 촘촘함. 
+    결론적으로
+    네 질문 그대로 답하면: “메모리 영역 잡아놓고 문자 추가하다 capacity 넘으면 재할당한다” → 맞다. push_back 경로가 정확히 그 로직을 보여줌. 
+    다만 string은
+    항상 끝에 널을 유지해야 하고(사이즈 바뀔 때마다 갱신), 
+    SSO로 힙 자체를 회피하는 구간이 있으며(오브젝트 안의 로컬 버퍼), 
+    삽입/치환/삭제가 문자열 전용 변이 루틴으로 수렴되어 관리된다는 점이 벡터와 실무적으로 다르다. 
+ */
+template<typename _CharT, typename _Traits, typename _Alloc>
+class basic_string
+
+/// A string of @c char
+typedef basic_string<char>    string;
+
+
+/*
+
+append(...)
+무엇: 뒤에 붙이기(문자/부분문자열/C-문자열/string_view/반복자 범위 등 다수 오버로드).
+복잡도: O(m) (필요 시 재할당 포함 O(n+m)).
+구현 포인트: 다양한 오버로드가 결국 “원본 버퍼 뒤에 m개를 늘리고 복사” 흐름. 일부 경로는 내부 _M_mutate/_M_replace로 수렴. 표준 libstdc++는 operator+=도 결국 append로 연결.
+
+assign(...)
+무엇: 기존 내용을 교체(다 갈아끼움).
+복잡도: O(m) (필요 시 재할당 포함 O(m)).
+구현 포인트: 할당자(allocator)·SSO 상태 따라 “로컬↔힙” 스위칭 분기(다른 할당자에서 왔다면 재할당 경로로).
+
+insert(...)
+무엇: 중간 삽입.
+복잡도: O(n + m) (뒤 꼬리를 memmove해야 하므로).
+구현 포인트: 문자열은 널 종료 불변식 유지가 필요해서 끝에 NUL 재기입 포함.
+
+erase(...)
+무엇: 위치/범위 삭제.
+복잡도: O(n) (삭제 뒤 꼬리를 앞으로 당김).
+구현 포인트: pos/len, iterator, range 버전 모두 내부 _M_erase로 집약. npos면 끝까지 잘라 size=pos로 바로 줄임.
+
+replace(...)
+무엇: 범위를 다른 내용으로 치환.
+복잡도: O(n + m).
+구현 포인트: 삭제+삽입을 한 번에 처리하는 변이 루틴(길이 늘면 재할당 가능).
+
+push_back(ch) / pop_back()
+무엇: 뒤에 1문자 추가 / 마지막 문자 제거.
+복잡도: push_back amortized O(1) (가끔 재할당 시 O(n)), pop_back O(1).
+구현 포인트: push_back은 내부적으로 append(1) 또는 _M_mutate 경유; pop_back은 내부 _M_erase(size-1,1).
+
+clear()
+무엇: size=0으로 비우기(용량은 유지).
+복잡도: O(1).
+
+swap(other)
+무엇: 내용/상태 교환.
+복잡도: 보통 O(1) (SSO 둘 다 로컬이면 고정 크기 버퍼 스왑이 필요하지만 사실상 상수시간).
+
+용량/크기/버퍼
+
+size() / length()
+무엇: 현재 길이.
+복잡도: O(1).
+
+capacity()
+무엇: 재할당 없이 담을 수 있는 최대 길이.
+복잡도: O(1).
+구현 포인트: SSO면 _S_local_capacity, 아니면 _M_allocated_capacity 반환.
+
+reserve(new_cap=?)
+무엇: 최소 용량 확보(축소는 보장 안 함).
+복잡도: 필요 시 재할당 O(n), 아니면 O(1).
+구현 포인트: 길이+1(널)까지 고려; length_error 체크.
+
+resize(n [, ch])
+무엇: 크기 조절. 줄이면 자르기, 늘리면 채우기(ch 없으면 0으로 디폴트).
+복잡도: 늘릴 때 O(증가량), 줄일 때 O(1)~O(k) (널 종료 갱신 포함).
+
+shrink_to_fit()
+무엇: capacity를 size로 “줄여달라”는 비구속적 요청.
+복잡도: 구현 따라 O(n) 재할당 가능.
+구현 포인트: libstdc++에선 내부적으로 reserve() 호출로 모델링(보장 없음).
+
+max_size()
+무엇: 구현/할당자 제약 하 최대 길이.
+복잡도: O(1).
+
+접근/조회/포인터
+
+operator[] / at(pos)
+무엇: 인덱스 접근.
+복잡도: O(1).
+구현 포인트: at은 범위 체크하여 예외, []는 UB 가능.
+
+front() / back()
+무엇: 첫/마지막 문자 참조.
+복잡도: O(1).
+주의: 빈 문자열에서 호출은 UB.
+
+data()
+무엇: 내부 버퍼 포인터(널 종료 보장 X는 C++17 전 구버전 얘기; 지금은 data()도 C-문자열과 동일 주소).
+복잡도: O(1).
+
+c_str()
+무엇: 널 종료된 C-문자열 포인터.
+복잡도: O(1).
+구현 포인트: size() 변경 시 항상 data()[size()]에 널을 써서 불변식 유지.
+
+반복자
+
+begin()/end(), cbegin()/cend(), rbegin()/rend(), crbegin()/crend()
+무엇: (상수) 정/역방향 반복자 범위.
+복잡도: O(1).
+구현 포인트: 연속 저장이므로 임의접근 반복자.
+
+복사/부분 추출
+
+copy(dest, count, pos=0)
+무엇: this[pos..pos+count)를 외부 버퍼로 복사(널 추가 안 함).
+복잡도: O(k).
+
+substr(pos=0, n=npos)
+무엇: 부분 문자열 리턴.
+복잡도: O(k) (k=반환 길이).
+구현 포인트: 내부 _M_check로 범위 검사 후 새 basic_string 생성.
+
+비교/탐색
+
+compare(...)
+무엇: 사전식 비교(음수/0/양수).
+복잡도: O(min(n,m)).
+구현 포인트: traits::compare(data(), other.data(), len) → 같으면 길이 비교 _S_compare. string_view 오버로드도 동일 구조.
+
+find(...) / rfind(...)
+무엇: 앞/뒤에서 부분 문자열(혹은 문자/배열)을 탐색.
+복잡도: 보통 O(n·pattern) 최악; 실구현은 선형에 가까운 단순 탐색(문자 하나면 O(n)).
+구현 포인트: C-문자열 인자는 traits::length로 길이 구해 다른 오버로드로 위임.
+
+find_first_of / find_last_of
+무엇: “주어진 문자 집합 중 하나”가 처음/끝에서 처음 등장하는 위치.
+복잡도: O(n·k) (k=문자 집합 크기; 구현 상 단순 선형 스캔+내부 소집합 검사).
+
+find_first_not_of / find_last_not_of
+무엇: “주어진 집합에 속하지 않는” 첫/마지막 위치.
+복잡도: O(n·k).
+
+rfind(...)
+무엇: 뒤에서부터 찾기.
+복잡도: O(n·pattern).
+구현 포인트: string_view, C-문자열 길이 인자 버전 등 다중 오버로드.
+
+rfind / find의 직관: 고급 알고리즘(BM/Knuth–Morris–Pratt) 쓰지 않고 구현 단순성을 택함(대부분의 표준 구현이 그럼). 긴 패턴 대량 탐색이면 직접 알고리즘 쓰거나 string_view+전용 검색기 권장.
+
+상태/기타
+empty() — 비었는가? O(1).
+get_allocator() — 할당자 획득. O(1).
+c_str / data — 위에 정리.
+length / size — 동의어. O(1).
+begin/end 계열 — 위에 정리.
+
+내부 동작 요지(성능 관점 리마인드)
+SSO: 짧으면 객체 내부 로컬 버퍼(힙 회피), 크면 힙 포인터+capacity 사용. capacity()는 SSO/힙을 분기하여 계산.
+재할당/변이 루틴: push_back/append/insert/replace/erase 등은 내부 공용 변이 루틴(예: _M_erase, _M_mutate)로 모여 메모리 이동, 널-종료 유지, 예외 안전성 처리.
+널 종료 불변식: 사이즈가 바뀔 때마다 data()[size()]에 널을 보장 → c_str() 즉시 사용 가능. 비교도 traits::compare 사용.
+
+*/
