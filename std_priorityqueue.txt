@@ -1,0 +1,86 @@
+/**
+ *  @brief  A standard container automatically sorting its contents.
+ *
+ *  @ingroup sequences
+ *
+ *  @tparam _Tp  Type of element.
+ *  @tparam _Sequence  Type of underlying sequence, defaults to vector<_Tp>.
+ *  @tparam _Compare  Comparison function object type, defaults to
+ *                    less<_Sequence::value_type>.
+ *
+ *  This is not a true container, but an @e adaptor.  It holds
+ *  another container, and provides a wrapper interface to that
+ *  container.  The wrapper is what enforces priority-based sorting
+ *  and %queue behavior.  Very few of the standard container/sequence
+ *  interface requirements are met (e.g., iterators).
+ *
+ *  The second template parameter defines the type of the underlying
+ *  sequence/container.  It defaults to std::vector, but it can be
+ *  any type that supports @c front(), @c push_back, @c pop_back,
+ *  and random-access iterators, such as std::deque or an
+ *  appropriate user-defined type.
+ *
+ *  The third template parameter supplies the means of making
+ *  priority comparisons.  It defaults to @c less<value_type> but
+ *  can be anything defining a strict weak ordering.
+ *
+ *  Members not found in @a normal containers are @c container_type,
+ *  which is a typedef for the second Sequence parameter, and @c
+ *  push, @c pop, and @c top, which are standard %queue operations.
+ *
+ *  @note No equality/comparison operators are provided for
+ *  %priority_queue.
+ *
+ *  @note Sorting of the elements takes place as they are added to,
+ *  and removed from, the %priority_queue using the
+ *  %priority_queue's member functions.  If you access the elements
+ *  by other means, and change their data such that the sorting
+ *  order would be different, the %priority_queue will not re-sort
+ *  the elements for you.  (How could it know to do so?)
+ */
+
+
+/*
+
+priority_queue
+
+컨테이너 어댑터
+진짜 컨테이너가 아니라 내부 컨테이너(c)와 비교자(comp)를 감싸 동작을 제공. 
+기본 템플릿은 priority_queue<T, std::vector<T>, std::less<T>>.
+
+기저 컨테이너 요구사항
+front(), push_back(), pop_back()과 랜덤 액세스 이터레이터가 있어야 함 → 보통 vector(기본)나 deque 사용.
+
+정렬/힙 유지 방식
+
+생성 시: 내부 시퀀스에 대해 std::make_heap(c.begin(), c.end(), comp)로 힙 구성.
+
+push(x): c.push_back(x) 후 std::push_heap(...).
+
+emplace(args...): c.emplace_back(...) 후 std::push_heap(...).
+
+pop(): std::pop_heap(...) 후 c.pop_back().
+
+top(): c.front() 반환(힙의 루트).
+
+비교자 의미
+기본 std::less<T>면 최대 힙(가장 큰 값이 top)이 됨. std::greater<T> 쓰면 최소 힙.
+
+시간 복잡도(평균/보장)
+
+push/pop = O(log N)
+
+top/empty/size = O(1)
+
+범위 생성자(배열 등으로부터) = O(N) (make_heap)
+
+이터레이션/연산 제한
+일반 컨테이너처럼 이터레이터를 제공하지 않음(힙 특성 때문에 무작위 열람 허용 X). 동등/비교 연산자도 제공 안 함.
+
+무효화 규칙
+이터레이터는 외부에 노출되지 않지만, 내부 컨테이너가 vector라면 재할당 시 포인터/참조 무효화 가능. 요소를 제자리에서 값 변경하면 힙 불변식이 깨질 수 있으므로 직접 push_heap/pop_heap 재적용 같은 복구 조치가 필요(표준 어댑터는 자동 재정렬 안 함).
+
+기타
+value_compare(비교자 타입 별칭), swap()은 c와 comp 둘 다 교환. 할당자 확장 생성자/형추론 가이드 제공(C++17~23).
+
+*/

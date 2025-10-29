@@ -11,8 +11,6 @@
 #include <queue>
 #include <deque>
 /*
-
-priority_queue
 pair
 tuple
 
@@ -24,5 +22,6 @@ shared_pointer
 int main()
 {
 
-    std::priority_queue<int> priority_q;
+    std::priority_queue<int> pq;
+    pq.
 }

@@ -129,7 +129,8 @@ libstdc++의 해시 테이블은
 를 동시에 갖고 있어.
 
 전역 리스트: 컨테이너에 들어있는 모든 노드가 한 줄로 이어짐. 반복자 증가(++it)는 이 리스트만 따라가서 항상 일정한 비용이야.
-버킷 배열: 각 버킷 엔트리는 “그 버킷 첫 노드의 직전 노드(before-node)”를 가리킴. 그래서 삽입/삭제를 insert_after / erase_after로 빠르게 할 수 있어.
+버킷 배열: 각 버킷 엔트리는 “그 버킷 첫 노드의 직전 노드(before-node)”를 가리킴. 
+그래서 삽입/삭제를 insert_after / erase_after로 빠르게 할 수 있어.
 
 */
 
@@ -140,20 +141,23 @@ libstdc++의 해시 테이블은
 
    /*
    
-unordered_map / unordered_set / (unordered_)multimap / (unordered_)multiset이 내부에서 쓰는 libstdc++ 해시테이블(_Hashtable) 구현을, 
+unordered_map / unordered_set / (unordered_)multimap / (unordered_)multiset이 내부에서 쓰는 
+libstdc++ 해시테이블(_Hashtable) 구현을, 
 실전에서 알아두면 좋은 포인트 위주로 압축 정리해줄게. 마지막에 충돌 처리도 명확히 답함.
 
 핵심 구조(메모리/버킷/노드)
 
 노드 기반 단일 연결 리스트 + 버킷 배열: 요소들은 forward_list처럼 단일 연결 리스트에 쭉 이어져 있고, 
 버킷 테이블은 각 버킷의 “before-begin 노드”를 가리키는 포인터(혹은 null)를 저장함. 비어 있지 않은 버킷은 실제 첫 원소가 아니라 
-**그 앞 노드(=컨테이너 공용 sentinel _M_before_begin 또는 버킷별 ‘그 앞 노드’)**를 가리키고, 실제 첫 노드는 그 포인터의 next로 접근함. 
+**그 앞 노드(=컨테이너 공용 sentinel _M_before_begin 또는 버킷별 ‘그 앞 노드’)**를 가리키고, 
+실제 첫 노드는 그 포인터의 next로 접근함. 
 버킷 포인터 자체는 역참조 금지(항상 next를 통해서만).
 
 왜 이렇게? 삽입/삭제를 forward_list::insert_after / erase_after처럼 구현하기 위해서. 
 이렇게 하면 빈 버킷이 많아도 이터레이터 증가가 일정하게 빠르고, 전체 리스트의 앞뒤 연결만 만지면 삽입/삭제가 단순해진다.
 
-**컨테이너 반복자(iterator)**는 노드만 따라 감: 증가 연산은 “현재 노드 → 다음 노드”로 진행. 버킷이 얼마나 비었든 이터레이터 인크리먼트 비용은 일정.
+**컨테이너 반복자(iterator)**는 노드만 따라 감: 증가 연산은 “현재 노드 → 다음 노드”로 진행. 
+버킷이 얼마나 비었든 이터레이터 인크리먼트 비용은 일정.
 
 테이블 상태 멤버: 버킷 배열 포인터, 버킷 개수, 전역 sentinel _M_before_begin, 요소 개수, 
 재해시 정책 객체 등이 핵심 상태. 초기엔 ‘단일 버킷’ 최적화로 1개 버킷/비할당 상태를 쓸 수 있음.

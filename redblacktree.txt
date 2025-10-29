@@ -273,13 +273,16 @@ libstdc++ stl_tree.h 레드블랙 트리 — 구현적 특징 요약
 
 5) 삭제(erase)와 재균형
 
-erase(pos/begin,end) 등은 내부에서 _M_erase_aux → _Rb_tree_rebalance_for_erase(node, header) 로 연결을 풀고, 노드를 파괴/카운트 감소합니다.
+erase(pos/begin,end) 등은 내부에서 _M_erase_aux → _Rb_tree_rebalance_for_erase(node, header) 로 연결을 풀고, 
+노드를 파괴/카운트 감소합니다.
 
-설계상 두 자식을 가진 노드 삭제 시 ‘후계자 재연결’ 방식을 써서, 삭제된 노드를 가리키던 반복자 외에는 무효화되지 않도록 합니다(설계 주석).
+설계상 두 자식을 가진 노드 삭제 시 ‘후계자 재연결’ 방식을 써서, 
+삭제된 노드를 가리키던 반복자 외에는 무효화되지 않도록 합니다(설계 주석).
 
 6) 탐색과 범위 질의
 
-find / count / lower_bound / upper_bound / equal_range 를 제공하며, 내부적으로 키 비교와 서브트리를 따라 내려가는 헬퍼를 사용합니다.
+find / count / lower_bound / upper_bound / equal_range 를 제공하며,
+ 내부적으로 키 비교와 서브트리를 따라 내려가는 헬퍼를 사용합니다.
 
 C++14 이후에는 투명 비교자(is_transparent) 최적화 경로도 준비되어 있습니다.
 

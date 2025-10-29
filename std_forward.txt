@@ -1,4 +1,5 @@
-들어온 인자의 값 범주(lvalue/rvalue)를 그대로 보존해서 다음 함수로 넘겨주는 캐스트입니다. 즉, perfect forwarding을 가능하게 하는 도구
+들어온 인자의 값 범주(lvalue/rvalue)를 그대로 보존해서 다음 함수로 넘겨주는 캐스트입니다. 
+즉, perfect forwarding을 가능하게 하는 도구
 
 forward<T>(x)는 x가 lvalue로 들어오면 lvalue로, rvalue로 들어오면 rvalue로 그대로 전달되게 static_cast<T&&>(x)를 해 줍니다
 
